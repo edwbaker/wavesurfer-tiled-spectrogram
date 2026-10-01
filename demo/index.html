@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wavesurfer-tiled-spectrogram demo</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 1.5rem; max-width: 1000px; color: #222; background: #fff; }
+  h1 { font-size: 1.3rem; }
+  fieldset { border: 1px solid #ccc; margin: 0 0 1rem; }
+  label { margin-right: 1rem; }
+  #player { border: 1px solid #ddd; }
+  #status { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; color: #555; }
+  #player ::part(timeline-wrapper) { min-height: 20px; }
+</style>
+</head>
+<body>
+<h1>wavesurfer-tiled-spectrogram</h1>
+<p>A spectrogram made in advance, shown from image tiles: only the tiles in view are fetched.
+Choose what to show; the address bar remembers it.</p>
+<form id="controls">
+  <fieldset>
+    <label>Audio <input name="audio" size="50"></label>
+    <label>Tiles <input name="tiles" size="40"></label>
+  </fieldset>
+  <fieldset>
+    <label><input type="radio" name="mode" value="preview"> Tiles until the Spectrogram plugin is ready</label>
+    <label><input type="radio" name="mode" value="tiles"> Tiles only</label>
+    <label><input type="radio" name="mode" value="builtin"> Spectrogram plugin only</label>
+  </fieldset>
+  <fieldset>
+    <label>wavesurfer.js <select name="ws"><option value="7">7.10.1</option><option value="8">8.0.1</option></select></label>
+    <label>Rows <input name="rows" type="number" value="120" min="20" max="512"></label>
+    <label>Sample rate <input name="rate" type="number" value="44100"></label>
+    <button>Load</button> <button type="button" id="play">Play / pause</button>
+  </fieldset>
+</form>
+<div id="player"></div>
+<p id="status"></p>
+<script>
+  // Settings from the address bar, so that a view can be shared and reloaded
+  const params = new URLSearchParams(location.search)
+  const settings = {
+    audio: params.get('audio') || 'samples/demo.wav',
+    tiles: params.get('tiles') || 'samples/demo/index.json',
+    mode: params.get('mode') || 'preview',
+    ws: params.get('ws') || '7',
+    rows: Number(params.get('rows') || 120),
+    rate: Number(params.get('rate') || 44100),
+  }
+  const form = document.getElementById('controls')
+  for (const [name, value] of Object.entries(settings)) {
+    const field = form.elements[name]
+    if (field instanceof RadioNodeList) field.value = value; else field.value = value
+  }
+  const base = settings.ws === '8' ? 'https://unpkg.com/wavesurfer.js@8.0.1/dist/' : '../node_modules/wavesurfer.js/dist/'
+  const scripts = [base + 'wavesurfer.min.js', base + 'plugins/timeline.min.js', base + 'plugins/regions.min.js',
+                   base + 'plugins/spectrogram.min.js', '../dist/tiled-spectrogram.min.js']
+  function load(i) {
+    if (i === scripts.length) return start()
+    const s = document.createElement('script')
+    s.src = scripts[i]
+    s.onload = () => load(i + 1)
+    document.head.appendChild(s)
+  }
+  load(0)
+
+  const status = document.getElementById('status')
+  function say(line) { status.textContent += line + '\n' }
+
+  function start() {
+    const t0 = performance.now()
+    const ms = () => Math.round(performance.now() - t0) + ' ms'
+    const plugins = [WaveSurfer.Timeline.create({ height: 20 }), WaveSurfer.Regions.create()]
+    let tiles = null
+    let spectrogram = null
+    if (settings.mode !== 'builtin') {
+      tiles = WaveSurfer.TiledSpectrogram.create({ url: settings.tiles, height: settings.rows })
+      plugins.push(tiles)
+    }
+    if (settings.mode !== 'tiles') {
+      spectrogram = WaveSurfer.Spectrogram.create({
+        labels: false, height: settings.rows, fftSamples: 512, scale: 'linear',
+        colorMap: 'gray', gainDB: 50, rangeDB: 80, useWebWorker: true,
+      })
+      plugins.push(spectrogram)
+    }
+    const ws = WaveSurfer.create({
+      container: '#player', height: 128, minPxPerSec: 344, normalize: true,
+      sampleRate: settings.rate, waveColor: '#000', progressColor: '#52b788', url: settings.audio, plugins: plugins,
+    })
+    if (tiles) {
+      tiles.on('load', (m) => say(ms() + ' manifest: ' + m.tileCount + ' tiles, ' + m.frequencyMax + ' Hz'))
+      tiles.on('ready', () => say(ms() + ' tiles in view drawn'))
+      tiles.on('error', (e) => say(ms() + ' tiles: ' + e.message))
+      tiles.on('handover', () => say(ms() + ' tiles handed over'))
+      if (spectrogram) tiles.handOver(spectrogram)
+    }
+    if (spectrogram) spectrogram.on('ready', () => say(ms() + ' Spectrogram plugin ready'))
+    ws.on('ready', () => {
+      say(ms() + ' audio decoded: ' + ws.getDuration().toFixed(3) + ' s')
+      plugins[1].addRegion({ start: 1, end: 2, color: 'rgba(82,183,136,0.25)' })
+    })
+    document.getElementById('play').onclick = () => ws.playPause()
+    // For checking from the console
+    Object.assign(window, { ws: ws, tiles: tiles, spectrogram: spectrogram })
+  }
+</script>
+</body>
+</html>

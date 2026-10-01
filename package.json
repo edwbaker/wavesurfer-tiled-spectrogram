@@ -1,0 +1,48 @@
+{
+  "name": "wavesurfer-tiled-spectrogram",
+  "version": "0.1.0",
+  "description": "A wavesurfer.js plugin that shows a precomputed spectrogram from image tiles, loading only the tiles in view",
+  "type": "module",
+  "license": "MIT",
+  "author": "Ed Baker",
+  "keywords": [
+    "wavesurfer",
+    "wavesurfer-plugin",
+    "wavesurfer.js",
+    "spectrogram",
+    "sonogram",
+    "tiles",
+    "audio",
+    "bioacoustics"
+  ],
+  "main": "./dist/tiled-spectrogram.js",
+  "module": "./dist/tiled-spectrogram.js",
+  "exports": {
+    ".": "./dist/tiled-spectrogram.js",
+    "./umd": "./dist/tiled-spectrogram.min.js",
+    "./package.json": "./package.json"
+  },
+  "unpkg": "./dist/tiled-spectrogram.min.js",
+  "jsdelivr": "./dist/tiled-spectrogram.min.js",
+  "files": [
+    "dist",
+    "tools/make-tiles.sh",
+    "SPEC.md"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "test": "node --test \"test/*.test.js\"",
+    "check": "es-check es2020 dist/tiled-spectrogram.min.js && es-check es2020 --module dist/tiled-spectrogram.js",
+    "serve": "node demo/serve.js"
+  },
+  "peerDependencies": {
+    "wavesurfer.js": "^7.10.1 || ^8.0.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "es-check": "^9.8.1",
+    "rollup": "^4.63.6",
+    "wavesurfer.js": "^7.10.1"
+  }
+}

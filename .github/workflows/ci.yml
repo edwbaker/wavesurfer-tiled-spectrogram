@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run check
+      - name: make-tiles.sh makes a manifest and tiles
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          ffmpeg -v error -f lavfi -i "sine=frequency=5000:sample_rate=44100:duration=70" test.wav
+          bash tools/make-tiles.sh test.wav out
+          test -f out/index.json && test -f out/0.jpg && test -f out/1.jpg
+          node -e "const m = require('./out/index.json'); if (m.tileCount !== 2) process.exit(1)"
