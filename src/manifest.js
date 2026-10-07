@@ -36,6 +36,7 @@ export function normaliseManifest(manifest) {
   const tiles = manifest.tiles
   if (Array.isArray(tiles)) {
     if (tiles.length !== tileCount) throw new Error('Manifest tiles list does not have tileCount entries')
+    if (!tiles.every((name) => typeof name === 'string' && name !== '')) throw new Error('Manifest tiles list holds something other than addresses')
   } else if (typeof tiles !== 'string' || tiles.indexOf('{index}') < 0) {
     throw new Error('Manifest tiles must be a list or a template holding {index}')
   }

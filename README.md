@@ -61,27 +61,48 @@ const ws = WaveSurfer.create({
 
 ### As a stand-in for the Spectrogram plugin
 
-Register the tiles **before** the Spectrogram plugin, so that they sit above
-it, and hand over to it:
+Register the tiles **before** the Spectrogram plugin, and hand over to it:
 
 ```js
 import Spectrogram from 'wavesurfer.js/dist/plugins/spectrogram.js'
 
 const tiles = TiledSpectrogram.create({ url: '/spectrograms/rec1/index.json', height: 120 })
-const spectrogram = Spectrogram.create({
-  height: 120, fftSamples: 512, scale: 'linear', colorMap: 'gray', gainDB: 50, rangeDB: 80,
+const spectrogram = Spectrogram.create({ height: 120, scale: 'linear', colorMap: 'gray' })
+WaveSurfer.create({
+  container: '#player',
+  url: '/audio/rec1.wav',
+  sampleRate: 44100, // the recording's own
+  plugins: [tiles, spectrogram],
 })
-WaveSurfer.create({ container: '#player', url: '/audio/rec1.wav', plugins: [tiles, spectrogram] })
 tiles.handOver(spectrogram)
 ```
 
 The Spectrogram plugin has no height until it has drawn. When it is ready, the
-tiles are lifted out of the flow where they are. The Spectrogram plugin moves
-up into their place underneath and paints over them, so nothing on the page
-moves, and the tiles are removed a second later.
+tiles are lifted out of the flow where they are and it moves up into their
+place, so nothing on the page moves. It then paints over them, which for a long
+recording takes some seconds, and until it has they show through wherever it
+has yet to paint.
 
-Tiles made by `make-tiles.sh` with its defaults look like the Spectrogram
-plugin at the settings above.
+For the two to look the same:
+
+- **Levels:** tiles made by `make-tiles.sh` with its defaults look like the
+  Spectrogram plugin with `scale: 'linear'`, `colorMap: 'gray'`, and its own
+  defaults for `fftSamples`, `gainDB` and `rangeDB`. Give `make-tiles.sh` the
+  same `--gain-db` and `--range-db` as the plugin if you change them. A
+  manifest's `dbRange` says which they were: `gainDB` is `-dbRange[1]`, and
+  `rangeDB` is `dbRange[1] - dbRange[0]`.
+- **Frequencies:** wavesurfer.js decodes audio at its `sampleRate` option,
+  8000 Hz unless it is set, and the Spectrogram plugin shows up to half that.
+  Set it to the recording's own rate to show what the tiles show, up to their
+  `frequencyMax`.
+- **Height:** give both plugins the same `height`.
+
+Where the browser cannot decode the recording at its own rate (very high
+sample rates, or hours of audio), the Spectrogram plugin will show less than
+the tiles do, and the tiles are better shown alone. To decide before making the
+player, fetch the manifest and check it with
+`TiledSpectrogram.normaliseManifest(manifest)`, then pass it as the `manifest`
+option.
 
 ### As the spectrogram, with no audio decoded
 
@@ -96,6 +117,11 @@ WaveSurfer.create({ container: '#player', plugins: [tiles] })
 This is what lets a recording too long, or too high in sample rate, for the
 browser to decode be shown and played.
 
+### One recording per plugin
+
+A plugin shows the tiles of one manifest, and does not follow `ws.load()` to
+another recording. Make a new player, with a new plugin, for each recording.
+
 ### Making tiles
 
 ```sh
@@ -105,8 +131,11 @@ tools/make-tiles.sh recording.wav out/recording/
 This writes `out/recording/0.jpg`, `1.jpg`, … and `index.json`.
 
 - Run it with `--help` for its options: tile length, resolution, channel,
-  levels and JPEG quality.
+  levels (`--gain-db`, `--range-db`) and JPEG quality.
 - It needs ffmpeg and ffprobe.
+- Tiles can be made by anything else that writes the format in
+  [SPEC.md](SPEC.md). The plugin shows whatever images it is given, so they
+  need not be greyscale.
 
 ## Options
 
@@ -118,22 +147,25 @@ This writes `out/recording/0.jpg`, `1.jpg`, … and `index.json`.
 | `height` | `120` | CSS pixels high. |
 | `lookahead` | `1` | Tiles to fetch on either side of those in view. |
 | `maxLoaded` | `12` | Tiles kept at most; the furthest from view are let go first. |
-| `handOverDelay` | `1000` | Milliseconds the tiles stay under the Spectrogram plugin after it is ready. |
 
 ## Events
 
 | Event | |
 |---|---|
-| `load` | The manifest has been loaded and checked; the listener is passed it. |
+| `load` | The manifest has been loaded and checked; the listener is passed it. Always after `WaveSurfer.create()` has returned, even when the manifest is given. |
 | `tileload` | A tile has arrived; the listener is passed its index. |
 | `ready` | The tiles in view have all arrived (or failed). |
 | `error` | The manifest or a tile could not be had. A tile is never retried. |
-| `handover` | The tiles have given way to the Spectrogram plugin. |
+| `handover` | The Spectrogram plugin is ready, and the tiles have moved beneath it. No more are fetched. |
 
 ## Methods
 
 `getManifest()`, `getFrequencyRange()` (`{min, max}` in Hz, for drawing an
 axis), `show()`, `hide()`, `handOver(spectrogramPlugin)`.
+
+`TiledSpectrogram.normaliseManifest(manifest)` checks a manifest as the plugin
+will. It returns the manifest with what may be left out filled in, or throws
+an Error saying what is wrong.
 
 ## Styling
 
@@ -159,12 +191,12 @@ npm install
 npm test          # node --test
 npm run build     # dist/: the ES module and the minified UMD build
 npm run check     # ES2020 check of dist/
+npm run samples   # the demo's sample recording and tiles (needs ffmpeg)
 npm run serve     # the demo at http://localhost:8800/demo/
 ```
 
 The demo compares the tiles with the Spectrogram plugin (`?mode=tiles`,
 `?mode=builtin`, `?mode=preview`), with either wavesurfer.js 7 or 8 (`?ws=8`).
-`tools/make-tiles.sh` makes its sample tiles.
 
 ## Licence
 

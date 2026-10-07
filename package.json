@@ -33,6 +33,7 @@
     "build": "rollup -c",
     "test": "node --test \"test/*.test.js\"",
     "check": "es-check es2020 dist/tiled-spectrogram.min.js && es-check es2020 --module dist/tiled-spectrogram.js",
+    "samples": "bash demo/make-samples.sh",
     "serve": "node demo/serve.js"
   },
   "peerDependencies": {

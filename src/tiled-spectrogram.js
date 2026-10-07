@@ -22,8 +22,6 @@ const DEFAULTS = {
   lookahead: 1,
   /** Tiles to keep at most; those furthest from the view are let go first */
   maxLoaded: 12,
-  /** Milliseconds the tiles stay under the Spectrogram plugin after handOver() */
-  handOverDelay: 1000,
 }
 
 class TiledSpectrogramPlugin extends BasePlugin {
@@ -36,7 +34,6 @@ class TiledSpectrogramPlugin extends BasePlugin {
    * @param {number} [options.height] CSS pixels high (120)
    * @param {number} [options.lookahead] tiles either side of the view (1)
    * @param {number} [options.maxLoaded] tiles kept at most (12)
-   * @param {number} [options.handOverDelay] ms tiles stay after handOver (1000)
    */
   static create(options) {
     return new TiledSpectrogramPlugin(options || {})
@@ -51,11 +48,11 @@ class TiledSpectrogramPlugin extends BasePlugin {
     this.failed = new Set()
     this.hidden = false
     this.gone = false
+    this.handedOver = false
     this.readyEmitted = false
     this.inView = []
     this.layoutTimer = null
     this.aborter = null
-    this.handOverTimer = null
   }
 
   onInit() {
@@ -112,9 +109,13 @@ class TiledSpectrogramPlugin extends BasePlugin {
   /**
    * Gives way to wavesurfer.js's own Spectrogram plugin when it has drawn its
    * spectrogram. The Spectrogram plugin's element sits below this one and has
-   * no height until it draws; when it is ready the tiles are lifted out of the
-   * flow where they are, so that it moves up into their place underneath and
-   * paints over them, and they are removed once it has had time to.
+   * no height until it draws. When it says it is ready the tiles are lifted
+   * out of the flow where they are, so that it moves up into their place
+   * without the layout moving, on top of them.
+   *
+   * It says it is ready before it has painted, and on a long recording
+   * painting takes seconds, so the tiles already fetched stay underneath it,
+   * showing wherever it has yet to paint. No more are fetched.
    *
    * Register this plugin before the Spectrogram plugin so that it sits above.
    *
@@ -126,18 +127,19 @@ class TiledSpectrogramPlugin extends BasePlugin {
       if (this.gone || !this.container) return
       const top = this.container.offsetTop
       Object.assign(this.container.style, { position: 'absolute', top: top + 'px', left: '0', zIndex: '4' })
-      this.handOverTimer = setTimeout(() => {
-        this.hide()
-        this.unloadAll()
-        this.emit('handover')
-      }, this.options.handOverDelay)
+      this.handedOver = true
+      this.emit('handover')
     }))
   }
 
   loadManifest() {
     const options = this.options
     if (options.manifest) {
-      this.setManifest(options.manifest, options.baseUrl || document.baseURI)
+      // Not at once: this runs inside WaveSurfer.create(), and the page has
+      // yet to listen for 'load', just as when the manifest is fetched
+      Promise.resolve().then(() => {
+        if (!this.gone) this.setManifest(options.manifest, options.baseUrl || document.baseURI)
+      })
       return
     }
     if (!options.url) {
@@ -215,7 +217,9 @@ class TiledSpectrogramPlugin extends BasePlugin {
     const inView = tilesInView(span[0], span[1], manifest.tileDuration, manifest.tileCount, 0)
     const wanted = tilesInView(span[0], span[1], manifest.tileDuration, manifest.tileCount, this.options.lookahead)
 
-    wanted.forEach((index) => this.loadTile(index))
+    // Once handed over, the tiles already fetched are only a backdrop for
+    // wherever the Spectrogram plugin has yet to paint, so no more are fetched
+    if (!this.handedOver) wanted.forEach((index) => this.loadTile(index))
     this.tiles.forEach((img, index) => {
       const times = tileSpan(manifest, index)
       const box = tileBox(times[0], times[1], where.duration, where.totalWidth)
@@ -291,7 +295,6 @@ class TiledSpectrogramPlugin extends BasePlugin {
   destroy() {
     this.gone = true
     if (this.aborter) this.aborter.abort()
-    clearTimeout(this.handOverTimer)
     clearTimeout(this.layoutTimer)
     this.unloadAll()
     if (this.container) this.container.remove()
@@ -299,6 +302,13 @@ class TiledSpectrogramPlugin extends BasePlugin {
     super.destroy()
   }
 }
+
+/**
+ * Checks a manifest as the plugin will, giving it with what may be left out
+ * filled in, or throwing an Error saying what is wrong with it. A page can use
+ * this to decide, before making the player, whether it has tiles to show.
+ */
+TiledSpectrogramPlugin.normaliseManifest = normaliseManifest
 
 export default TiledSpectrogramPlugin
 export { normaliseManifest, tileUrl, tileSpan } from './manifest.js'

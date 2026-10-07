@@ -8,11 +8,14 @@
 #   --pps N            columns a second, near enough (86)
 #   --height H         rows; the FFT is 2*H points (256, a 512-point FFT)
 #   --channel C        the channel shown, counting from 0 (0)
-#   --drange D         dB from white to black (80)
-#   --limit L          dBFS, in ffmpeg's terms, shown as black (-48, which is
-#                      wavesurfer.js's Spectrogram with gainDB 50)
+#   --gain-db G        levels as wavesurfer.js's Spectrogram plugin's gainDB:
+#                      -G dB and above is black (20, the plugin's default)
+#   --range-db R       and as its rangeDB: dB from black down to white (80)
 #   --quality Q        JPEG quality, ffmpeg's -q:v: 2 is best, 31 worst (12)
 #   --calibration C    a name for these settings, kept in the manifest
+#
+# The Spectrogram plugin looks like the tiles with the same gainDB and rangeDB,
+# scale 'linear', colorMap 'gray', and fftSamples twice the height.
 #
 # Every column is a whole number of samples, chosen near the rate asked for so
 # that ffmpeg's showspectrumpic drops none (it would otherwise lose the
@@ -26,8 +29,8 @@ tile_seconds=60
 pps=86
 height=256
 channel=0
-drange=80
-limit=-48
+gain_db=20
+range_db=80
 quality=12
 calibration=""
 
@@ -40,11 +43,11 @@ while [ $# -gt 0 ]; do
     --pps) pps="$2"; shift 2 ;;
     --height) height="$2"; shift 2 ;;
     --channel) channel="$2"; shift 2 ;;
-    --drange) drange="$2"; shift 2 ;;
-    --limit) limit="$2"; shift 2 ;;
+    --gain-db) gain_db="$2"; shift 2 ;;
+    --range-db) range_db="$2"; shift 2 ;;
     --quality) quality="$2"; shift 2 ;;
     --calibration) calibration="$2"; shift 2 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     -*) die "unknown option $1" ;;
     *) args+=("$1"); shift ;;
   esac
@@ -64,6 +67,14 @@ rate=$(probe sample_rate "$input")
 channels=$(probe channels "$input")
 [ -n "$rate" ] || die "no audio in $input"
 [ "$channel" -lt "$channels" ] || die "$input has $channels channels, so there is no channel $channel"
+
+# The levels in ffmpeg's terms: its dynamic range, and the level it shows as
+# black. ffmpeg measures a sine 2 dB lower than wavesurfer.js does, as found by
+# comparing the two spectrograms of the same recordings.
+drange=$range_db
+limit=$(awk -v g="$gain_db" 'BEGIN { print 2 - g }')
+awk -v d="$drange" -v l="$limit" 'BEGIN { exit !(d >= 10 && d <= 200 && l >= -100 && l <= 100) }' ||
+  die "ffmpeg cannot show --range-db $range_db (10 to 200) or --gain-db $gain_db (-98 to 102)"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -109,7 +120,7 @@ done
 # The manifest is written last, and only once every tile has been
 awk -v rate="$rate" -v samples="$samples" -v spc="$spc" -v width="$width" -v height="$height" \
     -v count="$tile_count" -v channel="$channel" -v drange="$drange" -v limit="$limit" \
-    -v calibration="$calibration" 'BEGIN {
+    -v gain="$gain_db" -v range="$range_db" -v calibration="$calibration" 'BEGIN {
   printf "{\n"
   printf "  \"type\": \"tiled-spectrogram\",\n  \"version\": 1,\n"
   printf "  \"duration\": %.6f,\n", samples / rate
@@ -122,6 +133,7 @@ awk -v rate="$rate" -v samples="$samples" -v spc="$spc" -v width="$width" -v hei
   printf "  \"sampleRate\": %d,\n  \"samplesPerColumn\": %d,\n  \"channel\": %d,\n", rate, spc, channel
   printf "  \"fftSize\": %d,\n  \"window\": \"hann\",\n", 2 * height
   printf "  \"colorMap\": \"gray\",\n"
+  printf "  \"dbRange\": [%s, %s],\n", -gain - range, -gain
   printf "  \"renderer\": {\"name\": \"ffmpeg showspectrumpic\", \"scale\": \"log\", \"drange\": %s, \"limit\": %s},\n", drange, limit
   printf "  \"calibration\": \"%s\"\n", calibration
   printf "}\n"

@@ -36,6 +36,7 @@ test('a manifest of another kind, or with impossible values, is refused', () => 
   assert.throws(() => normaliseManifest(aManifest({ tileCount: 2.5 })), /whole number/)
   assert.throws(() => normaliseManifest(aManifest({ tiles: 'tile.jpg' })), /\{index\}/)
   assert.throws(() => normaliseManifest(aManifest({ tiles: ['a.jpg'] })), /tileCount entries/)
+  assert.throws(() => normaliseManifest(aManifest({ tileCount: 2, duration: 100, tiles: ['a.jpg', null] })), /other than addresses/)
   assert.throws(() => normaliseManifest(aManifest({ frequencyMax: undefined })), /frequencyMax/)
   assert.throws(() => normaliseManifest(aManifest({ frequencyMin: 30000 })), /frequency range/)
 })

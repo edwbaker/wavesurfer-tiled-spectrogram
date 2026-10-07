@@ -34,8 +34,9 @@ or calibration) gives a new set at a new address.
   "fftSize": 512,
   "window": "hann",
   "colorMap": "gray",
-  "renderer": {"name": "ffmpeg showspectrumpic", "scale": "log", "drange": 80, "limit": -48},
-  "calibration": "2026-10a"
+  "dbRange": [-100, -20],
+  "renderer": {"name": "ffmpeg showspectrumpic", "scale": "log", "drange": 80, "limit": -18},
+  "calibration": "default"
 }
 ```
 
@@ -62,6 +63,7 @@ or calibration) gives a new set at a new address.
 | `pixelsPerSecond` | Columns a second (`sampleRate / samplesPerColumn`). Informational. |
 | `sampleRate`, `samplesPerColumn`, `channel`, `fftSize`, `window` | How the spectrogram was computed. |
 | `colorMap` | `"gray"`: white is quiet, black is loud. |
+| `dbRange` | `[quiet, loud]`: the levels shown as the two ends of `colorMap`, in dB measured as wavesurfer.js's Spectrogram plugin measures them, `20 × log10(2 × \|X\| / fftSize)` for each bin of the windowed FFT `X`. The plugin's `gainDB` is `-loud` and its `rangeDB` is `loud - quiet`. |
 | `renderer`, `calibration` | What made the tiles, with what settings, under what name, so that sets made differently can be told apart. |
 
 ## Tiles
@@ -80,10 +82,11 @@ or calibration) gives a new set at a new address.
 [tools/make-tiles.sh](tools/make-tiles.sh) makes a set with ffmpeg.
 
 - **Colour mapping:** greyscale JPEG, 256 rows (a 512-point FFT) and about 86
-  columns a second, levels mapped as wavesurfer.js's Spectrogram plugin maps
-  them with `gainDB: 50, rangeDB: 80, colorMap: 'gray'`. So a set made with
-  its defaults looks like that plugin's spectrogram at those settings, and
-  can stand in for it.
+  columns a second. Levels are mapped as wavesurfer.js's Spectrogram plugin
+  maps them with `colorMap: 'gray'` and its default `gainDB` (20) and
+  `rangeDB` (80), or others given as `--gain-db` and `--range-db`. So a set
+  looks like that plugin's spectrogram with `scale: 'linear'` at the same
+  settings, and can stand in for it.
 - **Columns:** every column is a whole number of samples, so that columns
   never drift against the audio.
 - **Channel:** only one channel is shown (`channel`, 0 by default), as

@@ -80,8 +80,8 @@ Choose what to show; the address bar remembers it.</p>
     }
     if (settings.mode !== 'tiles') {
       spectrogram = WaveSurfer.Spectrogram.create({
-        labels: false, height: settings.rows, fftSamples: 512, scale: 'linear',
-        colorMap: 'gray', gainDB: 50, rangeDB: 80, useWebWorker: true,
+        // As the tiles from make-tiles.sh's defaults; gainDB and rangeDB are the plugin's own
+        labels: false, height: settings.rows, scale: 'linear', colorMap: 'gray', useWebWorker: true,
       })
       plugins.push(spectrogram)
     }
