@@ -12,3 +12,6 @@
 - `tools/make-tiles.sh`: makes tiles with ffmpeg, calibrated to match the
   Spectrogram plugin with `scale: 'linear', colorMap: 'gray'` at its default
   levels, or at others given as `--gain-db` and `--range-db`.
+  - Tiles a whole folder into the same paths, `--jobs` at a time, passing over
+    recordings already tiled so that a stopped run can be started again.
+  - Writes only into a folder that is empty or holds its own earlier tiles.

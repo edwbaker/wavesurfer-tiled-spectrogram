@@ -130,9 +130,27 @@ tools/make-tiles.sh recording.wav out/recording/
 
 This writes `out/recording/0.jpg`, `1.jpg`, … and `index.json`.
 
+Given a folder, it tiles every audio file in it and in the folders within it,
+into the same paths under the output folder:
+
+```sh
+tools/make-tiles.sh --jobs 4 sounds/ tiles/
+```
+
+So `sounds/site1/rec1.wav` is tiled into `tiles/site1/rec1/`, and a page can
+find any recording's manifest from the recording's own path. Recordings
+already tiled are passed over, so a run that stopped can be started again
+(`--force` tiles them again). One that fails stops none of the others; the run
+ends by listing them, and exits with an error if there were any.
+
 - Run it with `--help` for its options: tile length, resolution, channel,
-  levels (`--gain-db`, `--range-db`) and JPEG quality.
-- It needs ffmpeg and ffprobe.
+  levels (`--gain-db`, `--range-db`), JPEG quality, and for a folder `--jobs`
+  and `--force`.
+- It needs bash, ffmpeg and ffprobe. On Windows, run it from Git Bash or WSL.
+- It writes only into a folder that is empty or holds tiles it made before,
+  which it replaces, so a mistaken output folder is refused, not overwritten.
+- While it works it keeps the channel shown as a 32-bit WAV in the temporary
+  folder (`TMPDIR`): about 640 MB for an hour at 44.1 kHz.
 - Tiles can be made by anything else that writes the format in
   [SPEC.md](SPEC.md). The plugin shows whatever images it is given, so they
   need not be greyscale.

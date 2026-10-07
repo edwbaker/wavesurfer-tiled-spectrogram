@@ -4,6 +4,14 @@
 #
 #   make-tiles.sh [options] INPUT OUTDIR
 #
+# INPUT can also be a folder. Every audio file in it, and in the folders within
+# it, is then tiled into the same path under OUTDIR less its extension:
+# INPUT/a/b.wav into OUTDIR/a/b/. Those already tiled are passed over, so a run
+# that stops part way can be started again.
+#
+# OUTDIR must be empty or hold only tiles made before, which are replaced.
+# Anything else in it is taken as a sign of a mistake, and refused.
+#
 #   --tile-seconds S   seconds a tile covers, near enough (60)
 #   --pps N            columns a second, near enough (86)
 #   --height H         rows; the FFT is 2*H points (256, a 512-point FFT)
@@ -13,6 +21,8 @@
 #   --range-db R       and as its rangeDB: dB from black down to white (80)
 #   --quality Q        JPEG quality, ffmpeg's -q:v: 2 is best, 31 worst (12)
 #   --calibration C    a name for these settings, kept in the manifest
+#   --jobs J           for a folder: recordings tiled at once (1)
+#   --force            for a folder: tile again those already tiled
 #
 # The Spectrogram plugin looks like the tiles with the same gainDB and rangeDB,
 # scale 'linear', colorMap 'gray', and fftSamples twice the height.
@@ -33,31 +43,109 @@ gain_db=20
 range_db=80
 quality=12
 calibration=""
+jobs=1
+force=0
 
 die() { echo "make-tiles.sh: $*" >&2; exit 1; }
 
 args=()
+opts=() # the options that say how to tile, passed on for each file of a folder
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tile-seconds) tile_seconds="$2"; shift 2 ;;
-    --pps) pps="$2"; shift 2 ;;
-    --height) height="$2"; shift 2 ;;
-    --channel) channel="$2"; shift 2 ;;
-    --gain-db) gain_db="$2"; shift 2 ;;
-    --range-db) range_db="$2"; shift 2 ;;
-    --quality) quality="$2"; shift 2 ;;
-    --calibration) calibration="$2"; shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    --tile-seconds|--pps|--height|--channel|--gain-db|--range-db|--quality|--calibration)
+      [ $# -ge 2 ] || die "$1 needs a value"
+      opts+=("$1" "$2")
+      case "$1" in
+        --tile-seconds) tile_seconds="$2" ;;
+        --pps) pps="$2" ;;
+        --height) height="$2" ;;
+        --channel) channel="$2" ;;
+        --gain-db) gain_db="$2" ;;
+        --range-db) range_db="$2" ;;
+        --quality) quality="$2" ;;
+        --calibration) calibration="$2" ;;
+      esac
+      shift 2 ;;
+    --jobs) [ $# -ge 2 ] || die "--jobs needs a value"; jobs="$2"; shift 2 ;;
+    --force) force=1; shift ;;
+    -h|--help) sed -n '2,/fftSamples twice the height/p' "$0"; exit 0 ;;
     -*) die "unknown option $1" ;;
     *) args+=("$1"); shift ;;
   esac
 done
-[ ${#args[@]} -eq 2 ] || die "give an input file and an output directory (--help)"
+[ ${#args[@]} -eq 2 ] || die "give an input file or folder, and an output folder (--help)"
 input="${args[0]}"
 outdir="${args[1]}"
-[ -f "$input" ] || die "no such file: $input"
 command -v ffmpeg >/dev/null || die "ffmpeg is not installed"
 command -v ffprobe >/dev/null || die "ffprobe is not installed"
+
+# A folder: each audio file in it is tiled by this script, --jobs at a time
+if [ -d "$input" ]; then
+  case "$jobs" in ''|*[!0-9]*|0) die "--jobs must be a whole number, 1 or more" ;; esac
+  while [ "$input" != "${input%/}" ] && [ "$input" != / ]; do input=${input%/}; done
+  list=$(mktemp -d)
+  trap 'rm -rf "$list"' EXIT
+  : > "$list/targets"
+  : > "$list/todo"
+  : > "$list/done"
+  found=0
+  skipped=0
+  # Hidden files and folders (.git, .DS_Store, ._name.wav) are passed over
+  while IFS= read -r -d '' file; do
+    found=$((found + 1))
+    rel=${file#"$input"/}
+    target="$outdir/${rel%.*}"
+    printf '%s\n' "$target" >> "$list/targets"
+    if [ "$force" -eq 0 ] && [ -f "$target/index.json" ]; then
+      skipped=$((skipped + 1))
+    else
+      printf '%s\0%s\0' "$file" "$target" >> "$list/todo"
+    fi
+  done < <(find "$input" -mindepth 1 -name '.*' -prune -o -type f \( \
+    -iname '*.wav' -o -iname '*.wave' -o -iname '*.w64' -o -iname '*.flac' -o -iname '*.wv' \
+    -o -iname '*.mp3' -o -iname '*.ogg' -o -iname '*.oga' -o -iname '*.opus' -o -iname '*.m4a' \
+    -o -iname '*.aac' -o -iname '*.aif' -o -iname '*.aiff' -o -iname '*.aifc' -o -iname '*.caf' \
+    \) -print0)
+  [ "$found" -gt 0 ] || die "no audio files in $input"
+  clash=$(sort "$list/targets" | uniq -d | sed -n 1p)
+  [ -z "$clash" ] || die "two recordings would be tiled into $clash: rename one of them"
+  todo=$((found - skipped))
+  echo "$input: $found recordings, $skipped tiled already, $todo to tile"
+  [ "$todo" -gt 0 ] || exit 0
+  # Each recording is tiled on its own, so one that fails stops none of the
+  # others; each that succeeds says so in the done list
+  export MAKE_TILES_DONE="$list/done"
+  xargs -0 -n 2 -P "$jobs" bash "$0" ${opts[@]+"${opts[@]}"} < "$list/todo" || true
+  failed=0
+  while IFS= read -r -d '' file && IFS= read -r -d '' target; do
+    if ! grep -Fxq -- "$target" "$list/done"; then
+      failed=$((failed + 1))
+      echo "make-tiles.sh: not tiled: $file" >&2
+    fi
+  done < "$list/todo"
+  echo "$input: $((todo - failed)) tiled, $failed failed"
+  [ "$failed" -eq 0 ] || exit 1
+  exit 0
+fi
+[ -f "$input" ] || die "no such file or folder: $input"
+
+# OUTDIR must be empty or hold only tiles: anything else there suggests it was
+# given by mistake (a home folder, a website), and is not to be overwritten
+if [ -d "$outdir" ]; then
+  for f in "$outdir"/*; do
+    [ -e "$f" ] || continue
+    name=${f##*/}
+    case "$name" in
+      index.json) grep -q '"tiled-spectrogram"' "$f" ||
+        die "$outdir/index.json is not a tiles manifest, so $outdir is not for tiles" ;;
+      *.jpg) case "${name%.jpg}" in ''|*[!0-9]*) die "$outdir holds $name, so it is not for tiles" ;; esac ;;
+      *) die "$outdir holds $name, so it is not for tiles" ;;
+    esac
+  done
+fi
+# Earlier tiles go, and until every tile has been made again there is no manifest
+rm -f "$outdir/index.json"
+for f in "$outdir"/*.jpg; do [ ! -e "$f" ] || rm -f "$f"; done
 
 probe() {
   ffprobe -v error -select_streams a:0 -show_entries "stream=$1" -of csv=p=0 "$2" | tr -d '\r' | head -n 1
@@ -140,3 +228,5 @@ awk -v rate="$rate" -v samples="$samples" -v spc="$spc" -v width="$width" -v hei
 }' > "$outdir/index.json"
 
 echo "$outdir: $tile_count tiles of ${width}x${height} at $spc samples a column ($rate Hz)"
+# In a folder's run, say this recording is done
+[ -z "${MAKE_TILES_DONE:-}" ] || printf '%s\n' "$outdir" >> "$MAKE_TILES_DONE"
