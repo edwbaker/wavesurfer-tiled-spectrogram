@@ -5,6 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "Ed Baker",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edwbaker/wavesurfer-tiled-spectrogram.git"
+  },
+  "homepage": "https://github.com/edwbaker/wavesurfer-tiled-spectrogram#readme",
+  "bugs": {
+    "url": "https://github.com/edwbaker/wavesurfer-tiled-spectrogram/issues"
+  },
   "keywords": [
     "wavesurfer",
     "wavesurfer-plugin",
