@@ -17,3 +17,7 @@
   - Tiles a whole folder into the same paths, `--jobs` at a time, passing over
     recordings already tiled so that a stopped run can be started again.
   - Writes only into a folder that is empty or holds its own earlier tiles.
+  - Writes the recording's waveform peaks beside the tiles, as `peaks.json`
+    in the BBC audiowaveform JSON format, named by the manifest's `peaks`, so
+    that a player can stream the audio instead of decoding it.
+- The demo can stream the audio with the peaks, and show other colours.

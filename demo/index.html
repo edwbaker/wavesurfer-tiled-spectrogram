@@ -26,6 +26,7 @@ Choose what to show; the address bar remembers it.</p>
   <fieldset>
     <label><input type="radio" name="mode" value="preview"> Tiles until the Spectrogram plugin is ready</label>
     <label><input type="radio" name="mode" value="tiles"> Tiles only</label>
+    <label><input type="radio" name="mode" value="stream"> Tiles only, audio streamed with the peaks</label>
     <label><input type="radio" name="mode" value="builtin"> Spectrogram plugin only</label>
   </fieldset>
   <fieldset>
@@ -91,7 +92,8 @@ Choose what to show; the address bar remembers it.</p>
       tiles = WaveSurfer.TiledSpectrogram.create({ url: settings.tiles, height: settings.rows, colorMap: colorMap })
       plugins.push(tiles)
     }
-    if (settings.mode !== 'tiles') {
+    const stream = settings.mode === 'stream'
+    if (settings.mode !== 'tiles' && !stream) {
       spectrogram = WaveSurfer.Spectrogram.create({
         // As the tiles from make-tiles.sh's defaults; gainDB and rangeDB are the plugin's own
         labels: false, height: settings.rows, scale: 'linear', colorMap: colorMap, useWebWorker: true,
@@ -99,9 +101,18 @@ Choose what to show; the address bar remembers it.</p>
       plugins.push(spectrogram)
     }
     const ws = WaveSurfer.create({
-      container: '#player', height: 128, minPxPerSec: 344, normalize: true,
-      sampleRate: settings.rate, waveColor: '#000', progressColor: '#52b788', url: settings.audio, plugins: plugins,
+      container: '#player', height: 128, minPxPerSec: 344, normalize: true, sampleRate: settings.rate,
+      waveColor: '#000', progressColor: '#52b788', url: stream ? undefined : settings.audio, plugins: plugins,
     })
+    if (stream) {
+      // Nothing decoded: the waveform is drawn from the peaks beside the tiles,
+      // and the audio streams as it plays
+      tiles.on('load', async (m) => {
+        if (!m.peaks) { say(ms() + ' the manifest names no peaks'); return }
+        const peaks = await (await fetch(new URL(m.peaks, new URL(settings.tiles, location.href)))).json()
+        ws.load(settings.audio, [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], m.duration)
+      })
+    }
     if (tiles) {
       tiles.on('load', (m) => say(ms() + ' manifest: ' + m.tileCount + ' tiles, ' + m.frequencyMax + ' Hz'))
       tiles.on('ready', () => say(ms() + ' tiles in view drawn'))
@@ -111,7 +122,7 @@ Choose what to show; the address bar remembers it.</p>
     }
     if (spectrogram) spectrogram.on('ready', () => say(ms() + ' Spectrogram plugin ready'))
     ws.on('ready', () => {
-      say(ms() + ' audio decoded: ' + ws.getDuration().toFixed(3) + ' s')
+      say(ms() + (stream ? ' waveform drawn from the peaks: ' : ' audio decoded: ') + ws.getDuration().toFixed(3) + ' s')
       plugins[1].addRegion({ start: 1, end: 2, color: 'rgba(82,183,136,0.25)' })
     })
     document.getElementById('play').onclick = () => ws.playPause()

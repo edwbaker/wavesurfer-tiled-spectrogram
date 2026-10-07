@@ -100,23 +100,60 @@ For the two to look the same:
 
 Where the browser cannot decode the recording at its own rate (very high
 sample rates, or hours of audio), the Spectrogram plugin will show less than
-the tiles do, and the tiles are better shown alone. To decide before making the
-player, fetch the manifest and check it with
-`TiledSpectrogram.normaliseManifest(manifest)`, then pass it as the `manifest`
-option.
+the tiles do, and the tiles are better shown alone (see
+[Choosing between the two](#choosing-between-the-two)).
 
 ### As the spectrogram, with no audio decoded
 
-Given precomputed waveform peaks as well, wavesurfer.js can stream the audio
-instead of downloading and decoding it, and the tiles are the spectrogram:
+Given the recording's waveform peaks as well, wavesurfer.js can stream the
+audio instead of downloading and decoding it, and the tiles are the
+spectrogram. This is what lets a recording too long, or too high in sample
+rate, for the browser to decode be shown and played.
+
+`make-tiles.sh` writes the peaks beside the tiles, as `peaks.json` in the BBC
+audiowaveform JSON format, and the manifest names them:
 
 ```js
-WaveSurfer.create({ container: '#player', plugins: [tiles] })
-  .load('/audio/long.wav', peaks, duration)
+const manifestUrl = new URL('/spectrograms/long/index.json', location.href)
+const manifest = TiledSpectrogram.normaliseManifest(await (await fetch(manifestUrl)).json())
+const peaks = await (await fetch(new URL(manifest.peaks, manifestUrl))).json()
+
+const tiles = TiledSpectrogram.create({ manifest, baseUrl: manifestUrl.href })
+WaveSurfer.create({ container: '#player', minPxPerSec: 344, plugins: [tiles] })
+  .load('/audio/long.wav', [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], manifest.duration)
 ```
 
-This is what lets a recording too long, or too high in sample rate, for the
-browser to decode be shown and played.
+### Choosing between the two
+
+What matters is the rate the browser will decode the recording at: its own
+where it is short, less where decoding all of it would take too much memory
+(decoded audio takes 4 bytes a sample of each channel). Where that shows all
+that the tiles do, they stand in for the Spectrogram plugin; where it does
+not, they are the spectrogram:
+
+```js
+// decodeRate: the rate wavesurfer.js is to decode this recording at
+async function makePlayer(container, audioUrl, manifestUrl, decodeRate) {
+  const base = new URL(manifestUrl, location.href)
+  const manifest = TiledSpectrogram.normaliseManifest(await (await fetch(base)).json())
+  const tiles = TiledSpectrogram.create({ manifest, baseUrl: base.href })
+
+  if (manifest.frequencyMax <= decodeRate / 2 || !manifest.peaks) {
+    const spectrogram = Spectrogram.create({ scale: 'linear', colorMap: 'gray' })
+    const ws = WaveSurfer.create({ container, url: audioUrl, sampleRate: decodeRate, plugins: [tiles, spectrogram] })
+    tiles.handOver(spectrogram)
+    return ws
+  }
+
+  const peaks = await (await fetch(new URL(manifest.peaks, base))).json()
+  const ws = WaveSurfer.create({ container, plugins: [tiles] })
+  ws.load(audioUrl, [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], manifest.duration)
+  return ws
+}
+```
+
+A manifest without peaks falls back to decoding here, as the waveform needs
+something to be drawn from.
 
 ### One recording per plugin
 
@@ -129,7 +166,8 @@ another recording. Make a new player, with a new plugin, for each recording.
 tools/make-tiles.sh recording.wav out/recording/
 ```
 
-This writes `out/recording/0.jpg`, `1.jpg`, … and `index.json`.
+This writes `out/recording/0.jpg`, `1.jpg`, … and `index.json`, and the
+recording's waveform peaks as `peaks.json` (left out with `--no-peaks`).
 
 Given a folder, it tiles every audio file in it and in the folders within it,
 into the same paths under the output folder:
@@ -145,8 +183,8 @@ already tiled are passed over, so a run that stopped can be started again
 ends by listing them, and exits with an error if there were any.
 
 - Run it with `--help` for its options: tile length, resolution, channel,
-  levels (`--gain-db`, `--range-db`), JPEG quality, and for a folder `--jobs`
-  and `--force`.
+  levels (`--gain-db`, `--range-db`), JPEG quality, `--no-peaks`, and for a
+  folder `--jobs` and `--force`.
 - It needs bash, ffmpeg and ffprobe. On Windows, run it from Git Bash or WSL.
 - It writes only into a folder that is empty or holds tiles it made before,
   which it replaces, so a mistaken output folder is refused, not overwritten.
@@ -246,7 +284,9 @@ npm run serve     # the demo at http://localhost:8800/demo/
 ```
 
 The demo compares the tiles with the Spectrogram plugin (`?mode=tiles`,
-`?mode=builtin`, `?mode=preview`), with either wavesurfer.js 7 or 8 (`?ws=8`).
+`?mode=builtin`, `?mode=preview`), streams the audio with the peaks
+(`?mode=stream`), and takes other colours (`?colorMap=igray`, `?colorMap=heat`),
+with either wavesurfer.js 7 or 8 (`?ws=8`).
 
 ## Licence
 

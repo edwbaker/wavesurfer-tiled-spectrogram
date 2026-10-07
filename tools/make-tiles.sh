@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Makes a tiled spectrogram of an audio file with ffmpeg: greyscale JPEG tiles
-# and the index.json that describes them (see SPEC.md).
+# and the index.json that describes them (see SPEC.md), and the recording's
+# waveform peaks in peaks.json, for a player that streams the audio rather
+# than decoding it.
 #
 #   make-tiles.sh [options] INPUT OUTDIR
 #
@@ -21,6 +23,7 @@
 #   --range-db R       and as its rangeDB: dB from black down to white (80)
 #   --quality Q        JPEG quality, ffmpeg's -q:v: 2 is best, 31 worst (12)
 #   --calibration C    a name for these settings, kept in the manifest
+#   --no-peaks         no peaks.json
 #   --jobs J           for a folder: recordings tiled at once (1)
 #   --force            for a folder: tile again those already tiled
 #
@@ -43,6 +46,7 @@ gain_db=20
 range_db=80
 quality=12
 calibration=""
+peaks=1
 jobs=1
 force=0
 
@@ -66,6 +70,7 @@ while [ $# -gt 0 ]; do
         --calibration) calibration="$2" ;;
       esac
       shift 2 ;;
+    --no-peaks) peaks=0; opts+=("$1"); shift ;;
     --jobs) [ $# -ge 2 ] || die "--jobs needs a value"; jobs="$2"; shift 2 ;;
     --force) force=1; shift ;;
     -h|--help) sed -n '2,/fftSamples twice the height/p' "$0"; exit 0 ;;
@@ -138,13 +143,15 @@ if [ -d "$outdir" ]; then
     case "$name" in
       index.json) grep -q '"tiled-spectrogram"' "$f" ||
         die "$outdir/index.json is not a tiles manifest, so $outdir is not for tiles" ;;
+      peaks.json) grep -q '"samples_per_pixel"' "$f" ||
+        die "$outdir/peaks.json is not waveform peaks, so $outdir is not for tiles" ;;
       *.jpg) case "${name%.jpg}" in ''|*[!0-9]*) die "$outdir holds $name, so it is not for tiles" ;; esac ;;
       *) die "$outdir holds $name, so it is not for tiles" ;;
     esac
   done
 fi
 # Earlier tiles go, and until every tile has been made again there is no manifest
-rm -f "$outdir/index.json"
+rm -f "$outdir/index.json" "$outdir/peaks.json"
 for f in "$outdir"/*.jpg; do [ ! -e "$f" ] || rm -f "$f"; done
 
 probe() {
@@ -205,16 +212,48 @@ for ((i = 0; i < tile_count; i++)); do
     -frames:v 1 -q:v "$quality" "$outdir/$i.jpg"
 done
 
+# Waveform peaks: the lowest and highest sample of each column of the channel
+# shown, in the BBC audiowaveform JSON format (version 2, 16-bit). ffmpeg runs
+# in the temporary folder so that no path in a filter needs escaping. astats'
+# measure options (ffmpeg 4.4 on) make it five times quicker; an older ffmpeg
+# is asked without them.
+if [ "$peaks" -eq 1 ]; then
+  (
+    cd "$tmp"
+    blocks="asetnsamples=n=${spc}:p=0,astats=metadata=1:reset=1"
+    ffmpeg -v quiet -nostdin -i mono.wav -af \
+      "${blocks}:measure_perchannel=Min_level+Max_level:measure_overall=none,ametadata=mode=print:file=levels.txt" \
+      -f null - || {
+      rm -f levels.txt
+      ffmpeg -v error -nostdin -i mono.wav -af \
+        "${blocks},ametadata=mode=print:key=lavfi.astats.1.Min_level:file=levels.txt,ametadata=mode=print:key=lavfi.astats.1.Max_level:file=levels-max.txt" \
+        -f null -
+    }
+  )
+  awk -v rate="$rate" -v spc="$spc" '
+    function int16(x) { x = x * 32768; x = (x < 0) ? int(x - 0.5) : int(x + 0.5); return x < -32768 ? -32768 : (x > 32767 ? 32767 : x) }
+    /\.Min_level=/ { sub(/.*=/, ""); low[++n] = $0 }
+    /\.Max_level=/ { sub(/.*=/, ""); high[++m] = $0 }
+    END {
+      if (n == 0 || n != m) exit 1
+      printf "{\"version\":2,\"channels\":1,\"sample_rate\":%d,\"samples_per_pixel\":%d,\"bits\":16,\"length\":%d,\"data\":[", rate, spc, n
+      for (i = 1; i <= n; i++) printf "%s%d,%d", (i > 1 ? "," : ""), int16(low[i]), int16(high[i])
+      printf "]}\n"
+    }' "$tmp"/levels*.txt > "$tmp/peaks.json" || die "could not make the waveform peaks of $input"
+  mv "$tmp/peaks.json" "$outdir/peaks.json"
+fi
+
 # The manifest is written last, and only once every tile has been
 awk -v rate="$rate" -v samples="$samples" -v spc="$spc" -v width="$width" -v height="$height" \
     -v count="$tile_count" -v channel="$channel" -v drange="$drange" -v limit="$limit" \
-    -v gain="$gain_db" -v range="$range_db" -v calibration="$calibration" 'BEGIN {
+    -v gain="$gain_db" -v range="$range_db" -v calibration="$calibration" -v peaks="$peaks" 'BEGIN {
   printf "{\n"
   printf "  \"type\": \"tiled-spectrogram\",\n  \"version\": 1,\n"
   printf "  \"duration\": %.6f,\n", samples / rate
   printf "  \"tileDuration\": %.9f,\n", width * spc / rate
   printf "  \"tileCount\": %d,\n", count
   printf "  \"tiles\": \"{index}.jpg\",\n  \"mimeType\": \"image/jpeg\",\n"
+  if (peaks == 1) printf "  \"peaks\": \"peaks.json\",\n"
   printf "  \"width\": %d,\n  \"height\": %d,\n", width, height
   printf "  \"pixelsPerSecond\": %.6f,\n", rate / spc
   printf "  \"frequencyMin\": 0,\n  \"frequencyMax\": %s,\n  \"frequencyScale\": \"linear\",\n", rate / 2
