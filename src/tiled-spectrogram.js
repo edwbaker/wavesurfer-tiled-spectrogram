@@ -12,6 +12,7 @@
  * has no class fields, no `??=` and no lazy-loading attribute.
  */
 import BasePlugin from 'wavesurfer.js/dist/base-plugin.js'
+import { colorTable, recolor } from './color-map.js'
 import { predictedWidth, tileBox, tilesInView, tilesToUnload, visibleTimes } from './geometry.js'
 import { normaliseManifest, tileSpan, tileUrl } from './manifest.js'
 
@@ -22,6 +23,8 @@ const DEFAULTS = {
   lookahead: 1,
   /** Tiles to keep at most; those furthest from the view are let go first */
   maxLoaded: 12,
+  /** How grey tiles are coloured: 'gray' (as they are), 'igray' or 256 colours */
+  colorMap: 'gray',
 }
 
 class TiledSpectrogramPlugin extends BasePlugin {
@@ -34,6 +37,10 @@ class TiledSpectrogramPlugin extends BasePlugin {
    * @param {number} [options.height] CSS pixels high (120)
    * @param {number} [options.lookahead] tiles either side of the view (1)
    * @param {number} [options.maxLoaded] tiles kept at most (12)
+   * @param {string|Array<number[]>} [options.colorMap] how grey tiles are
+   *   coloured: 'gray' (as they are), 'igray' (inverted, loud white), or 256
+   *   [r, g, b, a] colours, each from 0 to 1, from the quietest level to the
+   *   loudest, as wavesurfer.js's Spectrogram plugin takes them
    */
   static create(options) {
     return new TiledSpectrogramPlugin(options || {})
@@ -41,10 +48,14 @@ class TiledSpectrogramPlugin extends BasePlugin {
 
   constructor(options) {
     super(Object.assign({}, DEFAULTS, options))
+    // Throws here, as the Spectrogram plugin does, for a colorMap it cannot use
+    this.colors = colorTable(this.options.colorMap)
+    this.colorBlocked = false
     this.manifest = null
     this.baseUrl = null
     this.container = null
     this.tiles = new Map()
+    this.sources = new Map()
     this.failed = new Set()
     this.hidden = false
     this.gone = false
@@ -169,6 +180,9 @@ class TiledSpectrogramPlugin extends BasePlugin {
       return
     }
     this.baseUrl = baseUrl
+    if (this.colors && this.manifest.colorMap !== 'gray') {
+      console.warn('TiledSpectrogram: colorMap is not applied, as the manifest does not say the tiles are "gray"')
+    }
     this.emit('load', this.manifest)
     this.layout()
   }
@@ -220,11 +234,11 @@ class TiledSpectrogramPlugin extends BasePlugin {
     // Once handed over, the tiles already fetched are only a backdrop for
     // wherever the Spectrogram plugin has yet to paint, so no more are fetched
     if (!this.handedOver) wanted.forEach((index) => this.loadTile(index))
-    this.tiles.forEach((img, index) => {
+    this.tiles.forEach((tile, index) => {
       const times = tileSpan(manifest, index)
       const box = tileBox(times[0], times[1], where.duration, where.totalWidth)
-      img.style.left = box.left + 'px'
-      img.style.width = box.width + 'px'
+      tile.style.left = box.left + 'px'
+      tile.style.width = box.width + 'px'
     })
     tilesToUnload(Array.from(this.tiles.keys()), wanted, this.options.maxLoaded).forEach((index) => this.unloadTile(index))
 
@@ -234,12 +248,17 @@ class TiledSpectrogramPlugin extends BasePlugin {
 
   loadTile(index) {
     if (this.tiles.has(index) || this.failed.has(index)) return
-    const img = document.createElement('img')
-    img.alt = ''
-    img.draggable = false
-    img.decoding = 'async'
-    img.setAttribute('part', 'tiled-spectrogram-tile')
-    Object.assign(img.style, {
+    const url = tileUrl(this.manifest, index, this.baseUrl)
+    // Only grey tiles can be recoloured; other images are shown as they are
+    if (this.colors && !this.colorBlocked && this.manifest.colorMap === 'gray') this.loadColored(index, url)
+    else this.loadAsIs(index, url, false)
+  }
+
+  /** A tile's element, an img or a canvas, placed in the container */
+  addTile(index, tagName) {
+    const tile = document.createElement(tagName)
+    tile.setAttribute('part', 'tiled-spectrogram-tile')
+    Object.assign(tile.style, {
       position: 'absolute',
       top: '0',
       height: '100%',
@@ -248,32 +267,108 @@ class TiledSpectrogramPlugin extends BasePlugin {
       pointerEvents: 'none',
       userSelect: 'none',
     })
+    this.tiles.set(index, tile)
+    this.container.appendChild(tile)
+    return tile
+  }
+
+  /**
+   * A tile shown as it is. afterCors: being tried again without CORS, after
+   * its site refused to let it be recoloured.
+   */
+  loadAsIs(index, url, afterCors) {
+    const img = this.addTile(index, 'img')
+    img.alt = ''
+    img.draggable = false
+    img.decoding = 'async'
     img.onload = () => {
-      if (this.gone) return
-      img.dataset.loaded = '1'
-      this.emit('tileload', index)
-      this.checkReady()
+      if (afterCors) this.blockColor()
+      this.tileLoaded(index, img)
     }
-    img.onerror = () => {
-      if (this.gone || !this.tiles.has(index)) return
-      // Given up on, not retried: a tile that is not there will not appear
-      this.failed.add(index)
+    img.onerror = () => this.tileFailed(index, img)
+    img.src = url
+  }
+
+  /**
+   * A grey tile drawn into a canvas through the colour map. Its pixels have to
+   * be read, so a tile from another site is fetched with CORS; if that site
+   * does not allow it, the tile is tried again and shown grey.
+   */
+  loadColored(index, url) {
+    const canvas = this.addTile(index, 'canvas')
+    const source = new Image()
+    const crossSite = new URL(url, document.baseURI).origin !== window.location.origin
+    if (crossSite) source.crossOrigin = 'anonymous'
+    source.onload = () => {
+      if (this.gone || this.tiles.get(index) !== canvas) return
+      this.sources.delete(index)
+      try {
+        canvas.width = source.naturalWidth
+        canvas.height = source.naturalHeight
+        const context = canvas.getContext('2d')
+        context.drawImage(source, 0, 0)
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height)
+        recolor(pixels.data, this.colors)
+        context.putImageData(pixels, 0, 0)
+      } catch (error) {
+        // Its pixels could not be read after all (redirected to another site)
+        this.blockColor()
+        this.unloadTile(index)
+        this.loadAsIs(index, url, false)
+        return
+      }
+      this.tileLoaded(index, canvas)
+    }
+    source.onerror = () => {
+      if (this.gone || this.tiles.get(index) !== canvas) return
+      this.sources.delete(index)
+      if (!crossSite) {
+        this.tileFailed(index, canvas)
+        return
+      }
       this.unloadTile(index)
-      this.fail(new Error('Tile ' + index + ' could not be loaded'))
-      this.checkReady()
+      this.loadAsIs(index, url, true)
     }
-    this.tiles.set(index, img)
-    this.container.appendChild(img)
-    img.src = tileUrl(this.manifest, index, this.baseUrl)
+    this.sources.set(index, source)
+    source.src = url
+  }
+
+  /** From now on tiles are shown grey, as their pixels cannot be read */
+  blockColor() {
+    if (this.colorBlocked) return
+    this.colorBlocked = true
+    console.warn('TiledSpectrogram: the tiles\' site does not allow CORS, so they cannot be recoloured and are shown grey')
+  }
+
+  tileLoaded(index, tile) {
+    if (this.gone || this.tiles.get(index) !== tile) return
+    tile.dataset.loaded = '1'
+    this.emit('tileload', index)
+    this.checkReady()
+  }
+
+  tileFailed(index, tile) {
+    if (this.gone || this.tiles.get(index) !== tile) return
+    // Given up on, not retried: a tile that is not there will not appear
+    this.failed.add(index)
+    this.unloadTile(index)
+    this.fail(new Error('Tile ' + index + ' could not be loaded'))
+    this.checkReady()
   }
 
   unloadTile(index) {
-    const img = this.tiles.get(index)
-    if (!img) return
-    img.onload = null
-    img.onerror = null
-    img.remove()
+    const tile = this.tiles.get(index)
+    if (!tile) return
+    tile.onload = null
+    tile.onerror = null
+    tile.remove()
     this.tiles.delete(index)
+    const source = this.sources.get(index)
+    if (source) {
+      source.onload = null
+      source.onerror = null
+      this.sources.delete(index)
+    }
   }
 
   unloadAll() {
@@ -284,8 +379,8 @@ class TiledSpectrogramPlugin extends BasePlugin {
   checkReady() {
     if (this.readyEmitted || !this.inView || this.inView.length === 0) return
     const done = this.inView.every((index) => {
-      const img = this.tiles.get(index)
-      return this.failed.has(index) || (img && img.dataset.loaded === '1')
+      const tile = this.tiles.get(index)
+      return this.failed.has(index) || (tile && tile.dataset.loaded === '1')
     })
     if (!done) return
     this.readyEmitted = true

@@ -7,6 +7,8 @@
   - Hands over to the Spectrogram plugin, staying beneath it while it paints.
   - `TiledSpectrogram.normaliseManifest()`, to check a manifest before making
     the player.
+  - `colorMap`: shows grey tiles in other colours, `'igray'` or any 256, as
+    wavesurfer.js's Spectrogram plugin takes them.
   - Builds as an ES module and a UMD script.
 - Manifest format, version 1 ([SPEC.md](SPEC.md)).
 - `tools/make-tiles.sh`: makes tiles with ffmpeg, calibrated to match the

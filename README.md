@@ -21,7 +21,7 @@ once, whatever the recording's length or sample rate.
 - **Simple format:** a manifest plus images ([SPEC.md](SPEC.md)), made by
   [tools/make-tiles.sh](tools/make-tiles.sh) with ffmpeg, or by anything else
   that writes the same format.
-- **Small and dependency-free:** about 8 KB minified, and works with
+- **Small and dependency-free:** about 10 KB minified, and works with
   wavesurfer.js 7.10 and 8.
 
 ## Installation
@@ -96,6 +96,7 @@ For the two to look the same:
   Set it to the recording's own rate to show what the tiles show, up to their
   `frequencyMax`.
 - **Height:** give both plugins the same `height`.
+- **Colours:** give both plugins the same `colorMap` (see [Colours](#colours)).
 
 Where the browser cannot decode the recording at its own rate (very high
 sample rates, or hours of audio), the Spectrogram plugin will show less than
@@ -165,6 +166,36 @@ ends by listing them, and exits with an error if there were any.
 | `height` | `120` | CSS pixels high. |
 | `lookahead` | `1` | Tiles to fetch on either side of those in view. |
 | `maxLoaded` | `12` | Tiles kept at most; the furthest from view are let go first. |
+| `colorMap` | `'gray'` | How grey tiles are coloured: `'gray'` as they are, `'igray'` inverted, or a list of 256 colours (see [Colours](#colours)). |
+
+## Colours
+
+Tiles whose manifest says `"colorMap": "gray"`, as `make-tiles.sh` makes them,
+can be shown in any colours. The `colorMap` option takes them in the same forms
+as wavesurfer.js's Spectrogram plugin, so that the two can be given the same:
+
+- `'gray'`: the tiles as they are, white quiet and black loud.
+- `'igray'`: inverted, black quiet and white loud.
+- A list of 256 `[r, g, b, a]` colours, each from 0 to 1, from the quietest
+  level to the loudest.
+
+The Spectrogram plugin's own default, `'roseus'`, is not built in here: to use
+other colours, give both plugins the same list.
+
+```js
+// From black through red and yellow to white
+const heat = Array.from({ length: 256 }, (_, i) => {
+  const t = i / 255
+  return [Math.min(1, 3 * t), Math.min(1, Math.max(0, 3 * t - 1)), Math.max(0, 3 * t - 2), 1]
+})
+const tiles = TiledSpectrogram.create({ url: '/spectrograms/rec1/index.json', colorMap: heat })
+const spectrogram = Spectrogram.create({ scale: 'linear', colorMap: heat })
+```
+
+Each tile is recoloured in the browser, which has to read its pixels. Tiles on
+another site than the page's therefore need that site to allow it with CORS
+(`Access-Control-Allow-Origin`). Where it does not, they are shown grey, and
+the console says why. Tiles that are not grey are always shown as they are.
 
 ## Events
 
@@ -188,7 +219,8 @@ an Error saying what is wrong.
 ## Styling
 
 The tiles are inside wavesurfer.js's shadow DOM. Style them with
-`::part(tiled-spectrogram)` and `::part(tiled-spectrogram-tile)`.
+`::part(tiled-spectrogram)` and `::part(tiled-spectrogram-tile)`. Each tile is
+an `img`, or a `canvas` where it has been recoloured.
 
 Before the audio is decoded, wavesurfer.js's Timeline plugin has no height.
 Reserving it keeps the tiles from moving down when it fills:

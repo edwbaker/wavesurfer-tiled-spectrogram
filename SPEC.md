@@ -62,7 +62,7 @@ or calibration) gives a new set at a new address.
 | `width`, `height` | Pixels of a full tile. A reader stretches tiles to fit, so these are informational. |
 | `pixelsPerSecond` | Columns a second (`sampleRate / samplesPerColumn`). Informational. |
 | `sampleRate`, `samplesPerColumn`, `channel`, `fftSize`, `window` | How the spectrogram was computed. |
-| `colorMap` | `"gray"`: white is quiet, black is loud. |
+| `colorMap` | `"gray"`: white is quiet, black is loud. Grey level *g* is loudness 255 − *g* on a scale from 0 (quiet) to 255 (loud), so a reader can show such tiles in any colours. Tiles without it are shown as they are. |
 | `dbRange` | `[quiet, loud]`: the levels shown as the two ends of `colorMap`, in dB measured as wavesurfer.js's Spectrogram plugin measures them, `20 × log10(2 × \|X\| / fftSize)` for each bin of the windowed FFT `X`. The plugin's `gainDB` is `-loud` and its `rangeDB` is `loud - quiet`. |
 | `renderer`, `calibration` | What made the tiles, with what settings, under what name, so that sets made differently can be told apart. |
 
