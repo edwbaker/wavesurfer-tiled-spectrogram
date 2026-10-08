@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Makes a tiled spectrogram of an audio file with ffmpeg: greyscale JPEG tiles
-# and the index.json that describes them (see SPEC.md), and the recording's
-# waveform peaks in peaks.json, for a player that streams the audio rather
-# than decoding it.
+# Makes a tiled spectrogram of an audio file with ffmpeg, at several
+# resolutions (levels), and the index.json that describes them (see SPEC.md):
+# greyscale JPEG tiles in OUTDIR/<samples a column>/, the finest level at about
+# --pps columns a second and each coarser one four times coarser, until one
+# tile covers the recording. A coarser level is made from the one below it,
+# each pixel keeping the loudest of the four it covers in its row, so that
+# short sounds still show. Beside them go the recording's waveform peaks for
+# each level, in OUTDIR/peaks-<samples a column>.json, for a player that
+# streams the audio rather than decoding it.
 #
 #   make-tiles.sh [options] INPUT OUTDIR
 #
@@ -18,12 +23,12 @@
 #   --pps N            columns a second, near enough (86)
 #   --height H         rows; the FFT is 2*H points (256, a 512-point FFT)
 #   --channel C        the channel shown, counting from 0 (0)
-#   --gain-db G        levels as wavesurfer.js's Spectrogram plugin's gainDB:
+#   --gain-db G        loudness as wavesurfer.js's Spectrogram plugin's gainDB:
 #                      -G dB and above is black (20, the plugin's default)
 #   --range-db R       and as its rangeDB: dB from black down to white (80)
 #   --quality Q        JPEG quality, ffmpeg's -q:v: 2 is best, 31 worst (12)
 #   --calibration C    a name for these settings, kept in the manifest
-#   --no-peaks         no peaks.json
+#   --no-peaks         no peaks files
 #   --jobs J           for a folder: recordings tiled at once (1)
 #   --force            for a folder: tile again those already tiled
 #
@@ -134,8 +139,12 @@ if [ -d "$input" ]; then
 fi
 [ -f "$input" ] || die "no such file or folder: $input"
 
-# OUTDIR must be empty or hold only tiles: anything else there suggests it was
-# given by mistake (a home folder, a website), and is not to be overwritten
+isNumber() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
+
+# OUTDIR must be empty or hold only what this makes: anything else there
+# suggests it was given by mistake (a home folder, a website), and is not to be
+# overwritten. Earlier versions made one level, its tiles beside the manifest
+# and its peaks in peaks.json, so those are known too.
 if [ -d "$outdir" ]; then
   for f in "$outdir"/*; do
     [ -e "$f" ] || continue
@@ -143,16 +152,27 @@ if [ -d "$outdir" ]; then
     case "$name" in
       index.json) grep -q '"tiled-spectrogram"' "$f" ||
         die "$outdir/index.json is not a tiles manifest, so $outdir is not for tiles" ;;
-      peaks.json) grep -q '"samples_per_pixel"' "$f" ||
-        die "$outdir/peaks.json is not waveform peaks, so $outdir is not for tiles" ;;
-      *.jpg) case "${name%.jpg}" in ''|*[!0-9]*) die "$outdir holds $name, so it is not for tiles" ;; esac ;;
-      *) die "$outdir holds $name, so it is not for tiles" ;;
+      peaks.json|peaks-*.json) grep -q '"samples_per_pixel"' "$f" ||
+        die "$outdir/$name is not waveform peaks, so $outdir is not for tiles" ;;
+      *.jpg) isNumber "${name%.jpg}" || die "$outdir holds $name, so it is not for tiles" ;;
+      *)
+        if ! isNumber "$name" || [ ! -d "$f" ]; then die "$outdir holds $name, so it is not for tiles"; fi
+        for g in "$f"/*; do
+          [ -e "$g" ] || continue
+          leaf=${g##*/}
+          if [ "${leaf%.jpg}" = "$leaf" ] || ! isNumber "${leaf%.jpg}"; then
+            die "$outdir/$name holds $leaf, so $outdir is not for tiles"
+          fi
+        done ;;
     esac
   done
 fi
 # Earlier tiles go, and until every tile has been made again there is no manifest
-rm -f "$outdir/index.json" "$outdir/peaks.json"
-for f in "$outdir"/*.jpg; do [ ! -e "$f" ] || rm -f "$f"; done
+rm -f "$outdir/index.json"
+for f in "$outdir"/peaks.json "$outdir"/peaks-*.json "$outdir"/*.jpg; do [ ! -e "$f" ] || rm -f "$f"; done
+for f in "$outdir"/*; do
+  if [ -d "$f" ] && isNumber "${f##*/}"; then rm -rf "${f:?}"; fi
+done
 
 probe() {
   ffprobe -v error -select_streams a:0 -show_entries "stream=$1" -of csv=p=0 "$2" | tr -d '\r' | head -n 1
@@ -163,7 +183,7 @@ channels=$(probe channels "$input")
 [ -n "$rate" ] || die "no audio in $input"
 [ "$channel" -lt "$channels" ] || die "$input has $channels channels, so there is no channel $channel"
 
-# The levels in ffmpeg's terms: its dynamic range, and the level it shows as
+# Loudness in ffmpeg's terms: its dynamic range, and the level it shows as
 # black. ffmpeg measures a sine 2 dB lower than wavesurfer.js does, as found by
 # comparing the two spectrograms of the same recordings.
 drange=$range_db
@@ -196,7 +216,19 @@ width=$(awk -v s="$tile_seconds" -v r="$rate" -v c="$spc" 'BEGIN { w = int(s * r
 tile_samples=$((width * spc))
 tile_count=$(( (samples + tile_samples - 1) / tile_samples ))
 
-mkdir -p "$outdir"
+# The levels, by their samples a column: the finest, then each four times
+# coarser until one tile covers the recording. Every tile of every level is
+# $width columns across, so a coarser tile covers four tiles of the level below.
+levels=("$spc")
+while :; do
+  last=${levels[${#levels[@]} - 1]}
+  [ $(( (samples + width * last - 1) / (width * last) )) -gt 1 ] || break
+  levels+=("$((last * 4))")
+done
+
+# The finest level, analysed from the audio. Where there are coarser levels to
+# make from it, each tile is kept lossless too, as PNG, to make them from.
+mkdir -p "$outdir/$spc" "$tmp/level0"
 for ((i = 0; i < tile_count; i++)); do
   first=$((i * tile_samples))
   left=$((samples - first))
@@ -207,16 +239,69 @@ for ((i = 0; i < tile_count; i++)); do
     crop=",crop=${columns}:${height}:0:0"
   fi
   start=$(awk -v f="$first" -v r="$rate" 'BEGIN { printf "%.9f", f / r }')
-  ffmpeg -v error -nostdin -y -ss "$start" -i "$mono" -lavfi \
-    "atrim=end_sample=${tile_samples},apad=whole_len=${tile_samples},showspectrumpic=s=${width}x${height}:legend=0:mode=combined:color=channel:scale=log:fscale=lin:win_func=hann:drange=${drange}:limit=${limit},format=gray,negate${crop}" \
-    -frames:v 1 -q:v "$quality" "$outdir/$i.jpg"
+  graph="atrim=end_sample=${tile_samples},apad=whole_len=${tile_samples},showspectrumpic=s=${width}x${height}:legend=0:mode=combined:color=channel:scale=log:fscale=lin:win_func=hann:drange=${drange}:limit=${limit},format=gray,negate${crop}"
+  if [ "${#levels[@]}" -gt 1 ]; then
+    ffmpeg -v error -nostdin -y -ss "$start" -i "$mono" -lavfi "$graph,split=2[jpg][png]" \
+      -map "[jpg]" -frames:v 1 -q:v "$quality" "$outdir/$spc/$i.jpg" \
+      -map "[png]" -frames:v 1 "$tmp/level0/$i.png"
+  else
+    ffmpeg -v error -nostdin -y -ss "$start" -i "$mono" -lavfi "$graph" \
+      -frames:v 1 -q:v "$quality" "$outdir/$spc/$i.jpg"
+  fi
+done
+
+# Each coarser level from the one below: four of its tiles side by side, each
+# run of four columns kept as the darkest pixel of its row, the loudest, so
+# that a sound shorter than a column still shows. White (silence) pads the width
+# to a multiple of four; eroding towards the right three times leaves each pixel
+# the darkest of itself and the three after it; and every fourth column, those
+# starting a run, is kept by taking alternate lines of the image turned on its
+# side, twice.
+pool="pad=ceil(iw/4)*4:ih:0:0:white,erosion=coordinates=16,erosion=coordinates=16,erosion=coordinates=16"
+pool="$pool,transpose=clock,il=l=d:c=d,crop=iw:ih/2:0:0,il=l=d:c=d,crop=iw:ih/2:0:0,transpose=cclock"
+below="$tmp/level0"
+for ((k = 1; k < ${#levels[@]}; k++)); do
+  level=${levels[$k]}
+  level_samples=$((width * level))
+  level_count=$(( (samples + level_samples - 1) / level_samples ))
+  above="$tmp/level$k"
+  mkdir -p "$outdir/$level" "$above"
+  for ((j = 0; j < level_count; j++)); do
+    inputs=()
+    pads=""
+    for ((m = 4 * j; m < 4 * j + 4; m++)); do
+      [ -f "$below/$m.png" ] || break
+      inputs+=(-i "$below/$m.png")
+      pads="$pads[$((m - 4 * j))]"
+    done
+    n=$(( ${#inputs[@]} / 2 ))
+    [ "$n" -gt 0 ] || die "no tiles of the level below to make tile $j of level $k from"
+    left=$((samples - j * level_samples))
+    columns=$width
+    [ "$left" -ge "$level_samples" ] || columns=$(( (left + level - 1) / level ))
+    stack=""
+    [ "$n" -eq 1 ] || stack="hstack=inputs=$n,"
+    graph="${pads}${stack}format=gray,${pool},crop=${columns}:ih:0:0"
+    if [ $((k + 1)) -lt "${#levels[@]}" ]; then
+      ffmpeg -v error -nostdin -y "${inputs[@]}" -filter_complex "$graph,split=2[jpg][png]" \
+        -map "[jpg]" -frames:v 1 -q:v "$quality" "$outdir/$level/$j.jpg" \
+        -map "[png]" -frames:v 1 "$above/$j.png"
+    else
+      ffmpeg -v error -nostdin -y "${inputs[@]}" -filter_complex "$graph" \
+        -frames:v 1 -q:v "$quality" "$outdir/$level/$j.jpg"
+    fi
+  done
+  rm -rf "${below:?}"
+  below=$above
 done
 
 # Waveform peaks: the lowest and highest sample of each column of the channel
-# shown, in the BBC audiowaveform JSON format (version 2, 16-bit). ffmpeg runs
-# in the temporary folder so that no path in a filter needs escaping. astats'
-# measure options (ffmpeg 4.4 on) make it five times quicker; an older ffmpeg
-# is asked without them.
+# shown, a file for each level, in the BBC audiowaveform JSON format (version 2,
+# 16-bit). Those of the finest level come from the audio: ffmpeg runs in the
+# temporary folder so that no path in a filter needs escaping, and astats'
+# measure options (ffmpeg 4.4 on) make it five times quicker, an older ffmpeg
+# being asked without them. Each point of a coarser level is the lowest and
+# highest of the four points below it.
 if [ "$peaks" -eq 1 ]; then
   (
     cd "$tmp"
@@ -230,42 +315,70 @@ if [ "$peaks" -eq 1 ]; then
         -f null -
     }
   )
-  awk -v rate="$rate" -v spc="$spc" '
+  awk -v rate="$rate" -v levels="${levels[*]}" -v dir="$tmp" '
     function int16(x) { x = x * 32768; x = (x < 0) ? int(x - 0.5) : int(x + 0.5); return x < -32768 ? -32768 : (x > 32767 ? 32767 : x) }
-    /\.Min_level=/ { sub(/.*=/, ""); low[++n] = $0 }
-    /\.Max_level=/ { sub(/.*=/, ""); high[++m] = $0 }
+    /\.Min_level=/ { sub(/.*=/, ""); low[++n] = int16($0) }
+    /\.Max_level=/ { sub(/.*=/, ""); high[++m] = int16($0) }
     END {
       if (n == 0 || n != m) exit 1
-      printf "{\"version\":2,\"channels\":1,\"sample_rate\":%d,\"samples_per_pixel\":%d,\"bits\":16,\"length\":%d,\"data\":[", rate, spc, n
-      for (i = 1; i <= n; i++) printf "%s%d,%d", (i > 1 ? "," : ""), int16(low[i]), int16(high[i])
-      printf "]}\n"
-    }' "$tmp"/levels*.txt > "$tmp/peaks.json" || die "could not make the waveform peaks of $input"
-  mv "$tmp/peaks.json" "$outdir/peaks.json"
+      count = split(levels, spc, " ")
+      for (level = 1; level <= count; level++) {
+        if (level > 1) {
+          k = 0
+          for (i = 1; i <= n; i += 4) {
+            lo = low[i]; hi = high[i]
+            for (j = i + 1; j < i + 4 && j <= n; j++) { if (low[j] < lo) lo = low[j]; if (high[j] > hi) hi = high[j] }
+            k++; low[k] = lo; high[k] = hi
+          }
+          n = k
+        }
+        file = dir "/peaks-" spc[level] ".json"
+        printf "{\"version\":2,\"channels\":1,\"sample_rate\":%d,\"samples_per_pixel\":%d,\"bits\":16,\"length\":%d,\"data\":[", rate, spc[level], n > file
+        for (i = 1; i <= n; i++) printf "%s%d,%d", (i > 1 ? "," : ""), low[i], high[i] > file
+        printf "]}\n" > file
+        close(file)
+      }
+    }' "$tmp"/levels*.txt || die "could not make the waveform peaks of $input"
+  for level in "${levels[@]}"; do mv "$tmp/peaks-$level.json" "$outdir/peaks-$level.json"; done
 fi
 
 # The manifest is written last, and only once every tile has been
-awk -v rate="$rate" -v samples="$samples" -v spc="$spc" -v width="$width" -v height="$height" \
-    -v count="$tile_count" -v channel="$channel" -v drange="$drange" -v limit="$limit" \
-    -v gain="$gain_db" -v range="$range_db" -v calibration="$calibration" -v peaks="$peaks" 'BEGIN {
+awk -v rate="$rate" -v samples="$samples" -v width="$width" -v height="$height" -v levels="${levels[*]}" \
+    -v channel="$channel" -v drange="$drange" -v limit="$limit" -v gain="$gain_db" -v range="$range_db" \
+    -v calibration="$calibration" -v peaks="$peaks" 'BEGIN {
+  count = split(levels, spc, " ")
   printf "{\n"
   printf "  \"type\": \"tiled-spectrogram\",\n  \"version\": 1,\n"
   printf "  \"duration\": %.6f,\n", samples / rate
-  printf "  \"tileDuration\": %.9f,\n", width * spc / rate
-  printf "  \"tileCount\": %d,\n", count
-  printf "  \"tiles\": \"{index}.jpg\",\n  \"mimeType\": \"image/jpeg\",\n"
-  if (peaks == 1) printf "  \"peaks\": \"peaks.json\",\n"
-  printf "  \"width\": %d,\n  \"height\": %d,\n", width, height
-  printf "  \"pixelsPerSecond\": %.6f,\n", rate / spc
+  printf "  \"sampleRate\": %d,\n  \"channel\": %d,\n", rate, channel
   printf "  \"frequencyMin\": 0,\n  \"frequencyMax\": %s,\n  \"frequencyScale\": \"linear\",\n", rate / 2
-  printf "  \"sampleRate\": %d,\n  \"samplesPerColumn\": %d,\n  \"channel\": %d,\n", rate, spc, channel
-  printf "  \"fftSize\": %d,\n  \"window\": \"hann\",\n", 2 * height
-  printf "  \"colorMap\": \"gray\",\n"
+  printf "  \"window\": \"hann\",\n  \"colorMap\": \"gray\",\n"
   printf "  \"dbRange\": [%s, %s],\n", -gain - range, -gain
+  printf "  \"levels\": [\n"
+  for (k = 1; k <= count; k++) {
+    s = spc[k]
+    printf "    {\"width\": %d, \"height\": %d, \"tileDuration\": %.9f, \"tileCount\": %d, \"tiles\": \"%d/{index}.jpg\", ", width, height, width * s / rate, int((samples + width * s - 1) / (width * s)), s
+    printf "\"mimeType\": \"image/jpeg\", \"samplesPerColumn\": %d, \"pixelsPerSecond\": %.6f, \"fftSize\": %d}%s\n", s, rate / s, 2 * height, (k < count ? "," : "")
+  }
+  printf "  ],\n"
+  if (peaks == 1) {
+    printf "  \"peaks\": [\n"
+    for (k = 1; k <= count; k++) {
+      printf "    {\"pointsPerSecond\": %.6f, \"samplesPerPixel\": %d, \"url\": \"peaks-%d.json\"}%s\n", rate / spc[k], spc[k], spc[k], (k < count ? "," : "")
+    }
+    printf "  ],\n"
+  }
   printf "  \"renderer\": {\"name\": \"ffmpeg showspectrumpic\", \"scale\": \"log\", \"drange\": %s, \"limit\": %s},\n", drange, limit
   printf "  \"calibration\": \"%s\"\n", calibration
   printf "}\n"
 }' > "$outdir/index.json"
 
-echo "$outdir: $tile_count tiles of ${width}x${height} at $spc samples a column ($rate Hz)"
+made="$tile_count tiles"
+[ "$tile_count" -ne 1 ] || made="1 tile"
+if [ "${#levels[@]}" -gt 1 ]; then
+  echo "$outdir: ${#levels[@]} levels; the finest, $made of ${width}x${height} at $spc samples a column ($rate Hz)"
+else
+  echo "$outdir: 1 level, $made of ${width}x${height} at $spc samples a column ($rate Hz)"
+fi
 # In a folder's run, say this recording is done
 [ -z "${MAKE_TILES_DONE:-}" ] || printf '%s\n' "$outdir" >> "$MAKE_TILES_DONE"

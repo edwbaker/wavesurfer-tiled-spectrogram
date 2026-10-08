@@ -17,10 +17,17 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run check
-      - name: make-tiles.sh makes a manifest and tiles
+      - name: make-tiles.sh makes tiles and peaks at two levels, in a manifest the plugin takes
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           ffmpeg -v error -f lavfi -i "sine=frequency=5000:sample_rate=44100:duration=70" test.wav
           bash tools/make-tiles.sh test.wav out
-          test -f out/index.json && test -f out/0.jpg && test -f out/1.jpg
-          node -e "const m = require('./out/index.json'); if (m.tileCount !== 2) process.exit(1)"
+          test -f out/512/0.jpg && test -f out/512/1.jpg && test -f out/2048/0.jpg
+          test -f out/peaks-512.json && test -f out/peaks-2048.json
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs'
+            import { normaliseManifest } from './src/manifest.js'
+            const m = normaliseManifest(JSON.parse(readFileSync('out/index.json', 'utf8')))
+            const counts = m.levels.map((level) => level.tileCount).join()
+            if (counts !== '2,1' || m.peaks.length !== 2) { console.error(counts, m.peaks); process.exit(1) }
+          "

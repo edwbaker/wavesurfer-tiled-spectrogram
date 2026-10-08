@@ -1,25 +1,48 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normaliseManifest, tileSpan, tileUrl } from '../src/manifest.js'
+import { chooseLevel, choosePeaks, normaliseManifest, peaksUrl, tileSpan, tileUrl } from '../src/manifest.js'
+
+// Two levels, listed coarsest first to show they need not be in order: 86 and
+// 21.5 columns a second, as make-tiles.sh makes them at 44.1 kHz
+function aLevel(samplesPerColumn, changes) {
+  const tileDuration = 5168 * samplesPerColumn / 44100
+  return Object.assign({
+    width: 5168,
+    height: 256,
+    tileDuration: tileDuration,
+    tileCount: Math.ceil(571.9 / tileDuration),
+    tiles: samplesPerColumn + '/{index}.jpg',
+  }, changes)
+}
 
 function aManifest(changes) {
   return Object.assign({
     type: 'tiled-spectrogram',
     version: 1,
     duration: 571.9,
-    tileDuration: 59.98,
-    tileCount: 10,
-    tiles: '{index}.jpg',
     frequencyMax: 22050,
+    levels: [aLevel(2048), aLevel(512)],
   }, changes)
 }
 
-test('a good manifest is kept, with what may be left out filled in', () => {
+function somePeaks() {
+  return [{ pointsPerSecond: 21.533203, url: 'peaks-2048.json' }, { pointsPerSecond: 86.132812, url: 'peaks-512.json' }]
+}
+
+test('a good manifest is kept, with what may be left out filled in, finest level first', () => {
   const m = normaliseManifest(aManifest({}))
-  assert.equal(m.tileCount, 10)
   assert.equal(m.frequencyMin, 0)
   assert.equal(m.frequencyScale, 'linear')
-  assert.equal(normaliseManifest(aManifest({ tileCount: undefined })).tileCount, 10)
+  assert.deepEqual(m.levels.map((level) => level.tiles), ['512/{index}.jpg', '2048/{index}.jpg'])
+  assert.ok(Math.abs(m.levels[0].columnsPerSecond - 44100 / 512) < 1e-9)
+  assert.equal(m.levels[0].tileCount, 10)
+  assert.equal(m.levels[1].tileCount, 3)
+  assert.deepEqual(m.peaks, [])
+
+  const counted = normaliseManifest(aManifest({ levels: [aLevel(512, { tileCount: undefined })] }))
+  assert.equal(counted.levels[0].tileCount, 10)
+  const peaked = normaliseManifest(aManifest({ peaks: somePeaks() }))
+  assert.deepEqual(peaked.peaks.map((entry) => entry.url), ['peaks-512.json', 'peaks-2048.json'])
 })
 
 test('a minor version is read, a major one this code does not know is not', () => {
@@ -28,34 +51,65 @@ test('a minor version is read, a major one this code does not know is not', () =
 })
 
 test('a manifest of another kind, or with impossible values, is refused', () => {
+  const level = (changes) => aManifest({ levels: [aLevel(512, changes)] })
   assert.throws(() => normaliseManifest(null), /not an object/)
   assert.throws(() => normaliseManifest(aManifest({ type: 'peaks' })), /type/)
   assert.throws(() => normaliseManifest(aManifest({ duration: 0 })), /duration/)
-  assert.throws(() => normaliseManifest(aManifest({ tileDuration: -1 })), /tileDuration/)
-  assert.throws(() => normaliseManifest(aManifest({ tileCount: 9 })), /do not cover/)
-  assert.throws(() => normaliseManifest(aManifest({ tileCount: 2.5 })), /whole number/)
-  assert.throws(() => normaliseManifest(aManifest({ tiles: 'tile.jpg' })), /\{index\}/)
-  assert.throws(() => normaliseManifest(aManifest({ tiles: ['a.jpg'] })), /tileCount entries/)
-  assert.throws(() => normaliseManifest(aManifest({ tileCount: 2, duration: 100, tiles: ['a.jpg', null] })), /other than addresses/)
+  assert.throws(() => normaliseManifest(aManifest({ levels: [] })), /no levels/)
+  assert.throws(() => normaliseManifest(aManifest({ levels: undefined })), /no levels/)
+  assert.throws(() => normaliseManifest(aManifest({ levels: [null] })), /level 0 is not an object/)
+  assert.throws(() => normaliseManifest(level({ width: 0 })), /level 0 width/)
+  assert.throws(() => normaliseManifest(level({ tileDuration: -1 })), /level 0 tileDuration/)
+  assert.throws(() => normaliseManifest(level({ tileCount: 9 })), /do not cover/)
+  assert.throws(() => normaliseManifest(level({ tileCount: 2.5 })), /whole number/)
+  assert.throws(() => normaliseManifest(level({ tiles: 'tile.jpg' })), /\{index\}/)
+  assert.throws(() => normaliseManifest(level({ tiles: ['a.jpg'] })), /tileCount entries/)
+  assert.throws(() => normaliseManifest(level({ tileCount: 10, tiles: Array(9).fill('a.jpg').concat([null]) })), /other than addresses/)
   assert.throws(() => normaliseManifest(aManifest({ frequencyMax: undefined })), /frequencyMax/)
   assert.throws(() => normaliseManifest(aManifest({ frequencyMin: 30000 })), /frequency range/)
+  assert.throws(() => normaliseManifest(aManifest({ peaks: 'peaks.json' })), /peaks must be a list/)
+  assert.throws(() => normaliseManifest(aManifest({ peaks: [{ pointsPerSecond: 86 }] })), /peaks 0 has no url/)
+  assert.throws(() => normaliseManifest(aManifest({ peaks: [{ url: 'p.json' }] })), /peaks 0 pointsPerSecond/)
 })
 
-test('tiles are found beside their manifest', () => {
+test('the level shown is the coarsest with a column for every pixel drawn, or else the finest', () => {
   const m = normaliseManifest(aManifest({}))
-  assert.equal(tileUrl(m, 3, 'https://files.example.org/spectrograms/x/1/index.json'),
-    'https://files.example.org/spectrograms/x/1/3.jpg')
-  assert.equal(tileUrl(m, 3), '3.jpg')
-  const listed = normaliseManifest(aManifest({ tileCount: 10, tiles: Array.from({ length: 10 }, (_, i) => 'img/' + i + '.png') }))
-  assert.equal(tileUrl(listed, 2, 'https://h.example/a/index.json'), 'https://h.example/a/img/2.png')
-  const twice = normaliseManifest(aManifest({ tiles: '{index}/{index}.jpg' }))
-  assert.equal(tileUrl(twice, 4), '4/4.jpg')
+  const shown = (pixelsPerSecond) => chooseLevel(m, pixelsPerSecond).tiles
+  assert.equal(shown(5), '2048/{index}.jpg', 'zoomed out: the coarse level is fine enough')
+  assert.equal(shown(21.533203125), '2048/{index}.jpg', 'exactly its columns a second')
+  assert.equal(shown(30), '512/{index}.jpg', 'between the two: the finer')
+  assert.equal(shown(344), '512/{index}.jpg', 'finer than any: the finest')
+  assert.equal(shown(0), '512/{index}.jpg', 'not yet known: the finest')
+  assert.equal(shown(NaN), '512/{index}.jpg')
 })
 
-test('every tile spans tileDuration, the last ending with the recording', () => {
+test('peaks are chosen as levels are, and there may be none', () => {
+  assert.equal(choosePeaks(normaliseManifest(aManifest({})), 86), null)
+  const m = normaliseManifest(aManifest({ peaks: somePeaks() }))
+  assert.equal(choosePeaks(m, 10).url, 'peaks-2048.json')
+  assert.equal(choosePeaks(m, 50).url, 'peaks-512.json')
+  assert.equal(choosePeaks(m, 344).url, 'peaks-512.json')
+})
+
+test("a level's tiles, and peaks, are found beside their manifest", () => {
+  const m = normaliseManifest(aManifest({ peaks: somePeaks() }))
+  const base = 'https://files.example.org/spectrograms/x/1/index.json'
+  assert.equal(tileUrl(m.levels[0], 3, base), 'https://files.example.org/spectrograms/x/1/512/3.jpg')
+  assert.equal(tileUrl(m.levels[1], 2), '2048/2.jpg')
+  assert.equal(peaksUrl(m.peaks[0], base), 'https://files.example.org/spectrograms/x/1/peaks-512.json')
+  assert.equal(peaksUrl(m.peaks[0]), 'peaks-512.json')
+  const listed = normaliseManifest(aManifest({ levels: [aLevel(512, { tiles: Array.from({ length: 10 }, (_, i) => 'img/' + i + '.png') })] }))
+  assert.equal(tileUrl(listed.levels[0], 2, 'https://h.example/a/index.json'), 'https://h.example/a/img/2.png')
+  const twice = normaliseManifest(aManifest({ levels: [aLevel(512, { tiles: '{index}/{index}.jpg' })] }))
+  assert.equal(tileUrl(twice.levels[0], 4), '4/4.jpg')
+})
+
+test("every tile of a level spans its tileDuration, the last ending with the recording", () => {
   const m = normaliseManifest(aManifest({}))
-  assert.deepEqual(tileSpan(m, 0), [0, 59.98])
-  const last = tileSpan(m, 9)
-  assert.ok(Math.abs(last[0] - 539.82) < 1e-9)
+  const fine = m.levels[0]
+  assert.deepEqual(tileSpan(fine, 0, m.duration), [0, fine.tileDuration])
+  const last = tileSpan(fine, 9, m.duration)
+  assert.ok(Math.abs(last[0] - 9 * fine.tileDuration) < 1e-9)
   assert.equal(last[1], 571.9)
+  assert.equal(tileSpan(m.levels[1], 2, m.duration)[1], 571.9)
 })

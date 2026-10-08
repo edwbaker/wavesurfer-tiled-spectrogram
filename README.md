@@ -16,12 +16,15 @@ once, whatever the recording's length or sample rate.
   all.
 - **Lazy loading:** tiles are fetched only as they come into view, and let go
   of when far away, so hours of audio cost no more than seconds.
+- **Zooms out:** a manifest can hold the spectrogram at several resolutions.
+  Zoomed out, a coarser one is shown, so a whole recording of hours on screen
+  takes a tile or two, not hundreds.
 - **Follows the player:** they scroll and zoom with the waveform, under its
   regions and cursor.
 - **Simple format:** a manifest plus images ([SPEC.md](SPEC.md)), made by
   [tools/make-tiles.sh](tools/make-tiles.sh) with ffmpeg, or by anything else
   that writes the same format.
-- **Small and dependency-free:** about 10 KB minified, and works with
+- **Small and dependency-free:** about 12 KB minified, and works with
   wavesurfer.js 7.10 and 8.
 
 ## Installation
@@ -85,7 +88,7 @@ has yet to paint.
 
 For the two to look the same:
 
-- **Levels:** tiles made by `make-tiles.sh` with its defaults look like the
+- **Loudness:** tiles made by `make-tiles.sh` with its defaults look like the
   Spectrogram plugin with `scale: 'linear'`, `colorMap: 'gray'`, and its own
   defaults for `fftSamples`, `gainDB` and `rangeDB`. Give `make-tiles.sh` the
   same `--gain-db` and `--range-db` as the plugin if you change them. A
@@ -110,18 +113,26 @@ audio instead of downloading and decoding it, and the tiles are the
 spectrogram. This is what lets a recording too long, or too high in sample
 rate, for the browser to decode be shown and played.
 
-`make-tiles.sh` writes the peaks beside the tiles, as `peaks.json` in the BBC
-audiowaveform JSON format, and the manifest names them:
+`make-tiles.sh` writes the peaks beside the tiles, a file for each level in the
+BBC audiowaveform JSON format, and the manifest lists them.
+`TiledSpectrogram.choosePeaks()` chooses between them as the plugin chooses
+between levels. wavesurfer.js draws the same peaks at every zoom, so choose
+them for the most the player will zoom in to:
 
 ```js
 const manifestUrl = new URL('/spectrograms/long/index.json', location.href)
 const manifest = TiledSpectrogram.normaliseManifest(await (await fetch(manifestUrl)).json())
-const peaks = await (await fetch(new URL(manifest.peaks, manifestUrl))).json()
+const entry = TiledSpectrogram.choosePeaks(manifest, 344)
+const peaks = await (await fetch(TiledSpectrogram.peaksUrl(entry, manifestUrl.href))).json()
 
 const tiles = TiledSpectrogram.create({ manifest, baseUrl: manifestUrl.href })
 WaveSurfer.create({ container: '#player', minPxPerSec: 344, plugins: [tiles] })
   .load('/audio/long.wav', [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], manifest.duration)
 ```
+
+A player that only ever shows the whole recording, such as an overview, needs
+much less: an hour at 44.1 kHz shown 1000 pixels wide needs the coarsest
+peaks, about 5,000 points rather than the finest's 310,000.
 
 ### Choosing between the two
 
@@ -134,19 +145,21 @@ not, they are the spectrogram:
 ```js
 // decodeRate: the rate wavesurfer.js is to decode this recording at
 async function makePlayer(container, audioUrl, manifestUrl, decodeRate) {
+  const minPxPerSec = 344
   const base = new URL(manifestUrl, location.href)
   const manifest = TiledSpectrogram.normaliseManifest(await (await fetch(base)).json())
   const tiles = TiledSpectrogram.create({ manifest, baseUrl: base.href })
 
-  if (manifest.frequencyMax <= decodeRate / 2 || !manifest.peaks) {
+  if (manifest.frequencyMax <= decodeRate / 2 || manifest.peaks.length === 0) {
     const spectrogram = Spectrogram.create({ scale: 'linear', colorMap: 'gray' })
-    const ws = WaveSurfer.create({ container, url: audioUrl, sampleRate: decodeRate, plugins: [tiles, spectrogram] })
+    const ws = WaveSurfer.create({ container, url: audioUrl, sampleRate: decodeRate, minPxPerSec, plugins: [tiles, spectrogram] })
     tiles.handOver(spectrogram)
     return ws
   }
 
-  const peaks = await (await fetch(new URL(manifest.peaks, base))).json()
-  const ws = WaveSurfer.create({ container, plugins: [tiles] })
+  const entry = TiledSpectrogram.choosePeaks(manifest, minPxPerSec)
+  const peaks = await (await fetch(TiledSpectrogram.peaksUrl(entry, base.href))).json()
+  const ws = WaveSurfer.create({ container, minPxPerSec, plugins: [tiles] })
   ws.load(audioUrl, [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], manifest.duration)
   return ws
 }
@@ -154,6 +167,19 @@ async function makePlayer(container, audioUrl, manifestUrl, decodeRate) {
 
 A manifest without peaks falls back to decoding here, as the waveform needs
 something to be drawn from.
+
+### Levels
+
+A manifest can hold the spectrogram at several resolutions, its levels. The
+plugin shows the coarsest level that has a column for every pixel it draws,
+or the finest where none has, and changes level as the player zooms. Until the
+new level's tiles in view have arrived, those of the level before stay beneath
+them, so zooming never leaves a gap. Once handed over to the Spectrogram
+plugin, the tiles stay at the level they were.
+
+`make-tiles.sh` makes the finest level at about 86 columns a second, and each
+coarser one with four times fewer, until one tile covers the whole recording.
+The coarser levels add about a third to the space the tiles take.
 
 ### One recording per plugin
 
@@ -166,8 +192,10 @@ another recording. Make a new player, with a new plugin, for each recording.
 tools/make-tiles.sh recording.wav out/recording/
 ```
 
-This writes `out/recording/0.jpg`, `1.jpg`, … and `index.json`, and the
-recording's waveform peaks as `peaks.json` (left out with `--no-peaks`).
+This writes `out/recording/index.json`, and each level's tiles in a folder
+named by its samples a column: `512/0.jpg`, `512/1.jpg`, …, then `2048/0.jpg`,
+… for a recording at 44.1 kHz. Beside them go the recording's waveform peaks, a
+file for each level (`peaks-512.json`, …), left out with `--no-peaks`.
 
 Given a folder, it tiles every audio file in it and in the folders within it,
 into the same paths under the output folder:
@@ -183,7 +211,7 @@ already tiled are passed over, so a run that stopped can be started again
 ends by listing them, and exits with an error if there were any.
 
 - Run it with `--help` for its options: tile length, resolution, channel,
-  levels (`--gain-db`, `--range-db`), JPEG quality, `--no-peaks`, and for a
+  loudness (`--gain-db`, `--range-db`), JPEG quality, `--no-peaks`, and for a
   folder `--jobs` and `--force`.
 - It needs bash, ffmpeg and ffprobe. On Windows, run it from Git Bash or WSL.
 - It writes only into a folder that is empty or holds tiles it made before,
@@ -240,19 +268,32 @@ the console says why. Tiles that are not grey are always shown as they are.
 | Event | |
 |---|---|
 | `load` | The manifest has been loaded and checked; the listener is passed it. Always after `WaveSurfer.create()` has returned, even when the manifest is given. |
-| `tileload` | A tile has arrived; the listener is passed its index. |
+| `level` | The level to show has been chosen, at first or as the player zooms; the listener is passed it, one of the manifest's `levels`. |
+| `tileload` | A tile has arrived; the listener is passed its index and its level. |
 | `ready` | The tiles in view have all arrived (or failed). |
 | `error` | The manifest or a tile could not be had. A tile is never retried. |
 | `handover` | The Spectrogram plugin is ready, and the tiles have moved beneath it. No more are fetched. |
 
 ## Methods
 
-`getManifest()`, `getFrequencyRange()` (`{min, max}` in Hz, for drawing an
-axis), `show()`, `hide()`, `handOver(spectrogramPlugin)`.
+`getManifest()`, `getLevel()` (the level shown, one of the manifest's
+`levels`), `getFrequencyRange()` (`{min, max}` in Hz, for drawing an axis),
+`show()`, `hide()`, `handOver(spectrogramPlugin)`.
 
-`TiledSpectrogram.normaliseManifest(manifest)` checks a manifest as the plugin
-will. It returns the manifest with what may be left out filled in, or throws
-an Error saying what is wrong.
+A page can use these before it makes the player:
+
+- `TiledSpectrogram.normaliseManifest(manifest)` checks a manifest as the
+  plugin will. It returns the manifest with what may be left out filled in,
+  its `levels` and `peaks` each in order from the finest, and each level given
+  its `columnsPerSecond`. Or it throws an Error saying what is wrong.
+- `TiledSpectrogram.chooseLevel(manifest, pixelsPerSecond)` and
+  `TiledSpectrogram.choosePeaks(manifest, pixelsPerSecond)` give the level, or
+  the peaks, for drawing that many pixels a second of the recording.
+  `choosePeaks` gives null where the manifest lists none.
+- `TiledSpectrogram.peaksUrl(entry, baseUrl)` gives the address of one of the
+  manifest's `peaks`, resolved against the manifest's own.
+
+The ES module also exports them by name, with `tileUrl()` and `tileSpan()`.
 
 ## Styling
 
@@ -286,7 +327,8 @@ npm run serve     # the demo at http://localhost:8800/demo/
 The demo compares the tiles with the Spectrogram plugin (`?mode=tiles`,
 `?mode=builtin`, `?mode=preview`), streams the audio with the peaks
 (`?mode=stream`), and takes other colours (`?colorMap=igray`, `?colorMap=heat`),
-with either wavesurfer.js 7 or 8 (`?ws=8`).
+with either wavesurfer.js 7 or 8 (`?ws=8`). It zooms from 1 to 1000 pixels a
+second (`?zoom=10` starts at the coarser of its sample's two levels).
 
 ## Licence
 

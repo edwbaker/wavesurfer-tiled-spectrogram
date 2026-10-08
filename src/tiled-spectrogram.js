@@ -14,7 +14,19 @@
 import BasePlugin from 'wavesurfer.js/dist/base-plugin.js'
 import { colorTable, recolor } from './color-map.js'
 import { predictedWidth, tileBox, tilesInView, tilesToUnload, visibleTimes } from './geometry.js'
-import { normaliseManifest, tileSpan, tileUrl } from './manifest.js'
+import { chooseLevel, choosePeaks, normaliseManifest, peaksUrl, tileSpan, tileUrl } from './manifest.js'
+
+// Tiles are kept by the level they are of and their place in it, "level/index",
+// the level being its place in the manifest's levels
+function tileKey(levelIndex, index) {
+  return levelIndex + '/' + index
+}
+function keyLevel(key) {
+  return Number(key.split('/')[0])
+}
+function keyIndex(key) {
+  return Number(key.split('/')[1])
+}
 
 const DEFAULTS = {
   /** CSS pixels high */
@@ -53,6 +65,7 @@ class TiledSpectrogramPlugin extends BasePlugin {
     this.colorBlocked = false
     this.manifest = null
     this.baseUrl = null
+    this.levelIndex = -1
     this.container = null
     this.tiles = new Map()
     this.sources = new Map()
@@ -102,6 +115,11 @@ class TiledSpectrogramPlugin extends BasePlugin {
   /** The frequencies the tiles show, in Hz, once the manifest is loaded */
   getFrequencyRange() {
     return this.manifest ? { min: this.manifest.frequencyMin, max: this.manifest.frequencyMax } : null
+  }
+
+  /** The level being shown, one of the manifest's levels, or null before there is one */
+  getLevel() {
+    return this.manifest && this.levelIndex >= 0 ? this.manifest.levels[this.levelIndex] : null
   }
 
   show() {
@@ -227,35 +245,50 @@ class TiledSpectrogramPlugin extends BasePlugin {
     if (this.gone || this.hidden || !this.manifest || !this.wavesurfer) return
     const manifest = this.manifest
     const where = this.measure()
+    // The level for the pixels a second drawn. Once handed over, the tiles are
+    // only a backdrop, so they stay of the level they are.
+    if (!this.handedOver || this.levelIndex < 0) {
+      const chosen = chooseLevel(manifest, where.duration > 0 ? where.totalWidth / where.duration : 0)
+      const levelIndex = manifest.levels.indexOf(chosen)
+      if (levelIndex !== this.levelIndex) {
+        this.levelIndex = levelIndex
+        this.emit('level', chosen)
+      }
+    }
+    const level = manifest.levels[this.levelIndex]
     const span = visibleTimes(where.scroll, where.viewWidth, where.totalWidth, where.duration)
-    const inView = tilesInView(span[0], span[1], manifest.tileDuration, manifest.tileCount, 0)
-    const wanted = tilesInView(span[0], span[1], manifest.tileDuration, manifest.tileCount, this.options.lookahead)
+    const inView = tilesInView(span[0], span[1], level.tileDuration, level.tileCount, 0)
+    const wanted = tilesInView(span[0], span[1], level.tileDuration, level.tileCount, this.options.lookahead)
 
     // Once handed over, the tiles already fetched are only a backdrop for
     // wherever the Spectrogram plugin has yet to paint, so no more are fetched
-    if (!this.handedOver) wanted.forEach((index) => this.loadTile(index))
-    this.tiles.forEach((tile, index) => {
-      const times = tileSpan(manifest, index)
+    if (!this.handedOver) wanted.forEach((index) => this.loadTile(this.levelIndex, index))
+    // Every tile there is, of whichever level, laid out where it belongs
+    this.tiles.forEach((tile, key) => {
+      const times = tileSpan(manifest.levels[keyLevel(key)], keyIndex(key), manifest.duration)
       const box = tileBox(times[0], times[1], where.duration, where.totalWidth)
       tile.style.left = box.left + 'px'
       tile.style.width = box.width + 'px'
     })
-    tilesToUnload(Array.from(this.tiles.keys()), wanted, this.options.maxLoaded).forEach((index) => this.unloadTile(index))
+    const loaded = Array.from(this.tiles.keys()).filter((key) => keyLevel(key) === this.levelIndex).map(keyIndex)
+    tilesToUnload(loaded, wanted, this.options.maxLoaded).forEach((index) => this.unloadTile(tileKey(this.levelIndex, index)))
 
     this.inView = inView
+    this.dropOtherLevels()
     this.checkReady()
   }
 
-  loadTile(index) {
-    if (this.tiles.has(index) || this.failed.has(index)) return
-    const url = tileUrl(this.manifest, index, this.baseUrl)
+  loadTile(levelIndex, index) {
+    const key = tileKey(levelIndex, index)
+    if (this.tiles.has(key) || this.failed.has(key)) return
+    const url = tileUrl(this.manifest.levels[levelIndex], index, this.baseUrl)
     // Only grey tiles can be recoloured; other images are shown as they are
-    if (this.colors && !this.colorBlocked && this.manifest.colorMap === 'gray') this.loadColored(index, url)
-    else this.loadAsIs(index, url, false)
+    if (this.colors && !this.colorBlocked && this.manifest.colorMap === 'gray') this.loadColored(key, url)
+    else this.loadAsIs(key, url, false)
   }
 
   /** A tile's element, an img or a canvas, placed in the container */
-  addTile(index, tagName) {
+  addTile(key, tagName) {
     const tile = document.createElement(tagName)
     tile.setAttribute('part', 'tiled-spectrogram-tile')
     Object.assign(tile.style, {
@@ -267,7 +300,7 @@ class TiledSpectrogramPlugin extends BasePlugin {
       pointerEvents: 'none',
       userSelect: 'none',
     })
-    this.tiles.set(index, tile)
+    this.tiles.set(key, tile)
     this.container.appendChild(tile)
     return tile
   }
@@ -276,16 +309,16 @@ class TiledSpectrogramPlugin extends BasePlugin {
    * A tile shown as it is. afterCors: being tried again without CORS, after
    * its site refused to let it be recoloured.
    */
-  loadAsIs(index, url, afterCors) {
-    const img = this.addTile(index, 'img')
+  loadAsIs(key, url, afterCors) {
+    const img = this.addTile(key, 'img')
     img.alt = ''
     img.draggable = false
     img.decoding = 'async'
     img.onload = () => {
       if (afterCors) this.blockColor()
-      this.tileLoaded(index, img)
+      this.tileLoaded(key, img)
     }
-    img.onerror = () => this.tileFailed(index, img)
+    img.onerror = () => this.tileFailed(key, img)
     img.src = url
   }
 
@@ -294,14 +327,14 @@ class TiledSpectrogramPlugin extends BasePlugin {
    * be read, so a tile from another site is fetched with CORS; if that site
    * does not allow it, the tile is tried again and shown grey.
    */
-  loadColored(index, url) {
-    const canvas = this.addTile(index, 'canvas')
+  loadColored(key, url) {
+    const canvas = this.addTile(key, 'canvas')
     const source = new Image()
     const crossSite = new URL(url, document.baseURI).origin !== window.location.origin
     if (crossSite) source.crossOrigin = 'anonymous'
     source.onload = () => {
-      if (this.gone || this.tiles.get(index) !== canvas) return
-      this.sources.delete(index)
+      if (this.gone || this.tiles.get(key) !== canvas) return
+      this.sources.delete(key)
       try {
         canvas.width = source.naturalWidth
         canvas.height = source.naturalHeight
@@ -313,23 +346,23 @@ class TiledSpectrogramPlugin extends BasePlugin {
       } catch (error) {
         // Its pixels could not be read after all (redirected to another site)
         this.blockColor()
-        this.unloadTile(index)
-        this.loadAsIs(index, url, false)
+        this.unloadTile(key)
+        this.loadAsIs(key, url, false)
         return
       }
-      this.tileLoaded(index, canvas)
+      this.tileLoaded(key, canvas)
     }
     source.onerror = () => {
-      if (this.gone || this.tiles.get(index) !== canvas) return
-      this.sources.delete(index)
+      if (this.gone || this.tiles.get(key) !== canvas) return
+      this.sources.delete(key)
       if (!crossSite) {
-        this.tileFailed(index, canvas)
+        this.tileFailed(key, canvas)
         return
       }
-      this.unloadTile(index)
-      this.loadAsIs(index, url, true)
+      this.unloadTile(key)
+      this.loadAsIs(key, url, true)
     }
-    this.sources.set(index, source)
+    this.sources.set(key, source)
     source.src = url
   }
 
@@ -340,49 +373,67 @@ class TiledSpectrogramPlugin extends BasePlugin {
     console.warn('TiledSpectrogram: the tiles\' site does not allow CORS, so they cannot be recoloured and are shown grey')
   }
 
-  tileLoaded(index, tile) {
-    if (this.gone || this.tiles.get(index) !== tile) return
+  tileLoaded(key, tile) {
+    if (this.gone || this.tiles.get(key) !== tile) return
     tile.dataset.loaded = '1'
-    this.emit('tileload', index)
+    this.emit('tileload', keyIndex(key), this.manifest.levels[keyLevel(key)])
+    this.dropOtherLevels()
     this.checkReady()
   }
 
-  tileFailed(index, tile) {
-    if (this.gone || this.tiles.get(index) !== tile) return
+  tileFailed(key, tile) {
+    if (this.gone || this.tiles.get(key) !== tile) return
     // Given up on, not retried: a tile that is not there will not appear
-    this.failed.add(index)
-    this.unloadTile(index)
-    this.fail(new Error('Tile ' + index + ' could not be loaded'))
+    this.failed.add(key)
+    this.unloadTile(key)
+    this.fail(new Error('Tile ' + keyIndex(key) + ' of level ' + keyLevel(key) + ' could not be loaded'))
+    this.dropOtherLevels()
     this.checkReady()
   }
 
-  unloadTile(index) {
-    const tile = this.tiles.get(index)
+  unloadTile(key) {
+    const tile = this.tiles.get(key)
     if (!tile) return
     tile.onload = null
     tile.onerror = null
     tile.remove()
-    this.tiles.delete(index)
-    const source = this.sources.get(index)
+    this.tiles.delete(key)
+    const source = this.sources.get(key)
     if (source) {
       source.onload = null
       source.onerror = null
-      this.sources.delete(index)
+      this.sources.delete(key)
     }
   }
 
   unloadAll() {
-    Array.from(this.tiles.keys()).forEach((index) => this.unloadTile(index))
+    Array.from(this.tiles.keys()).forEach((key) => this.unloadTile(key))
+  }
+
+  /** Whether the tiles in view of the level shown have all arrived, or failed */
+  inViewDone() {
+    return this.inView.length > 0 && this.inView.every((index) => {
+      const key = tileKey(this.levelIndex, index)
+      const tile = this.tiles.get(key)
+      return this.failed.has(key) || (tile && tile.dataset.loaded === '1')
+    })
+  }
+
+  /**
+   * Lets go of the tiles of other levels once those of the level shown have
+   * arrived where they are in view. Until then they stay, beneath it, so that
+   * zooming never leaves the spectrogram blank.
+   */
+  dropOtherLevels() {
+    if (!this.inViewDone()) return
+    Array.from(this.tiles.keys()).forEach((key) => {
+      if (keyLevel(key) !== this.levelIndex) this.unloadTile(key)
+    })
   }
 
   /** Says once that the tiles in view have all arrived, or failed */
   checkReady() {
-    if (this.readyEmitted || !this.inView || this.inView.length === 0) return
-    const done = this.inView.every((index) => {
-      const tile = this.tiles.get(index)
-      return this.failed.has(index) || (tile && tile.dataset.loaded === '1')
-    })
-    if (!done) return
+    if (this.readyEmitted || !this.inViewDone()) return
     this.readyEmitted = true
     this.emit('ready')
   }
@@ -405,5 +456,14 @@ class TiledSpectrogramPlugin extends BasePlugin {
  */
 TiledSpectrogramPlugin.normaliseManifest = normaliseManifest
 
+/**
+ * Which of a normalised manifest's levels, or peaks, suits drawing the given
+ * pixels a second (see SPEC.md, Choosing a level), and where peaks are. A page
+ * streaming the audio uses these to find the peaks to draw its waveform from.
+ */
+TiledSpectrogramPlugin.chooseLevel = chooseLevel
+TiledSpectrogramPlugin.choosePeaks = choosePeaks
+TiledSpectrogramPlugin.peaksUrl = peaksUrl
+
 export default TiledSpectrogramPlugin
-export { normaliseManifest, tileUrl, tileSpan } from './manifest.js'
+export { chooseLevel, choosePeaks, normaliseManifest, peaksUrl, tileSpan, tileUrl } from './manifest.js'

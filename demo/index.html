@@ -16,8 +16,8 @@
 </head>
 <body>
 <h1>wavesurfer-tiled-spectrogram</h1>
-<p>A spectrogram made in advance, shown from image tiles: only the tiles in view are fetched.
-Choose what to show; the address bar remembers it.</p>
+<p>A spectrogram made in advance, shown from image tiles: only the tiles in view are fetched, at the
+resolution the zoom needs. Choose what to show; the address bar remembers it.</p>
 <form id="controls">
   <fieldset>
     <label>Audio <input name="audio" size="50"></label>
@@ -36,6 +36,10 @@ Choose what to show; the address bar remembers it.</p>
     <label>Sample rate <input name="rate" type="number" value="44100"></label>
     <button>Load</button> <button type="button" id="play">Play / pause</button>
   </fieldset>
+  <fieldset>
+    <label>Zoom <input id="slider" type="range" min="0" max="300" disabled>
+      <input name="zoom" type="number" min="1" max="1000" value="344"> pixels a second</label>
+  </fieldset>
 </form>
 <div id="player"></div>
 <p id="status"></p>
@@ -50,6 +54,7 @@ Choose what to show; the address bar remembers it.</p>
     colorMap: params.get('colorMap') || 'gray',
     rows: Number(params.get('rows') || 120),
     rate: Number(params.get('rate') || 44100),
+    zoom: Number(params.get('zoom') || 344),
   }
   const form = document.getElementById('controls')
   for (const [name, value] of Object.entries(settings)) {
@@ -101,29 +106,51 @@ Choose what to show; the address bar remembers it.</p>
       plugins.push(spectrogram)
     }
     const ws = WaveSurfer.create({
-      container: '#player', height: 128, minPxPerSec: 344, normalize: true, sampleRate: settings.rate,
+      container: '#player', height: 128, minPxPerSec: settings.zoom, normalize: true, sampleRate: settings.rate,
       waveColor: '#000', progressColor: '#52b788', url: stream ? undefined : settings.audio, plugins: plugins,
     })
-    if (stream) {
-      // Nothing decoded: the waveform is drawn from the peaks beside the tiles,
-      // and the audio streams as it plays
-      tiles.on('load', async (m) => {
-        if (!m.peaks) { say(ms() + ' the manifest names no peaks'); return }
-        const peaks = await (await fetch(new URL(m.peaks, new URL(settings.tiles, location.href)))).json()
-        ws.load(settings.audio, [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], m.duration)
-      })
-    }
     if (tiles) {
-      tiles.on('load', (m) => say(ms() + ' manifest: ' + m.tileCount + ' tiles, ' + m.frequencyMax + ' Hz'))
+      const perSecond = (level) => level.columnsPerSecond.toFixed(1) + ' columns a second'
+      tiles.on('load', (m) => say(ms() + ' manifest: ' + m.levels.length + ' levels, of ' +
+        m.levels.map((level) => level.tileCount + (level.tileCount === 1 ? ' tile' : ' tiles') + ' at ' + perSecond(level)).join(' and ') + '; up to ' + m.frequencyMax + ' Hz'))
+      tiles.on('level', (level) => say(ms() + ' showing the level at ' + perSecond(level)))
+      tiles.on('tileload', (index, level) => say(ms() + ' tile ' + index + ' at ' + perSecond(level)))
       tiles.on('ready', () => say(ms() + ' tiles in view drawn'))
       tiles.on('error', (e) => say(ms() + ' tiles: ' + e.message))
       tiles.on('handover', () => say(ms() + ' tiles handed over'))
       if (spectrogram) tiles.handOver(spectrogram)
     }
+    if (stream) {
+      // Nothing decoded: the waveform is drawn from the peaks beside the tiles,
+      // and the audio streams as it plays. wavesurfer.js draws the same peaks at
+      // every zoom, so they are chosen for the zoom it starts at, as wide as the
+      // player at least.
+      tiles.on('load', async (m) => {
+        const drawn = Math.max(settings.zoom, document.getElementById('player').clientWidth / m.duration)
+        const entry = WaveSurfer.TiledSpectrogram.choosePeaks(m, drawn)
+        if (!entry) { say(ms() + ' the manifest lists no peaks'); return }
+        say(ms() + ' peaks at ' + entry.pointsPerSecond.toFixed(1) + ' points a second, for ' + drawn.toFixed(1) + ' pixels a second')
+        const peaks = await (await fetch(WaveSurfer.TiledSpectrogram.peaksUrl(entry, new URL(settings.tiles, location.href).href))).json()
+        ws.load(settings.audio, [peaks.data.map((v) => v / (peaks.bits === 8 ? 128 : 32768))], m.duration)
+      })
+    }
     if (spectrogram) spectrogram.on('ready', () => say(ms() + ' Spectrogram plugin ready'))
+    // Zooming, from 1 to 1000 pixels a second on a slider that runs in powers
+    // of ten, or as typed; until the audio is ready the zoom is the one to start at
+    const slider = document.getElementById('slider')
+    const zoomField = form.elements.zoom
+    const zoom = (pixelsPerSecond) => {
+      zoomField.value = pixelsPerSecond
+      slider.value = Math.round(100 * Math.log10(pixelsPerSecond))
+      if (!slider.disabled) ws.zoom(pixelsPerSecond)
+    }
+    slider.value = Math.round(100 * Math.log10(settings.zoom))
+    slider.oninput = () => zoom(Math.round(10 ** (slider.value / 100)))
+    zoomField.onchange = () => { if (zoomField.value >= 1) zoom(Number(zoomField.value)) }
     ws.on('ready', () => {
       say(ms() + (stream ? ' waveform drawn from the peaks: ' : ' audio decoded: ') + ws.getDuration().toFixed(3) + ' s')
       plugins[1].addRegion({ start: 1, end: 2, color: 'rgba(82,183,136,0.25)' })
+      slider.disabled = false
     })
     document.getElementById('play').onclick = () => ws.playPause()
     // For checking from the console
