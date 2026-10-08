@@ -31,3 +31,16 @@ jobs:
             const counts = m.levels.map((level) => level.tileCount).join()
             if (counts !== '2,1' || m.peaks.length !== 2) { console.error(counts, m.peaks); process.exit(1) }
           "
+      - name: above 96 kHz the finest level is four times finer, in 15-second tiles
+        run: |
+          ffmpeg -v error -f lavfi -i "sine=frequency=40000:sample_rate=200000:duration=20" ultra.wav
+          bash tools/make-tiles.sh ultra.wav ultra
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs'
+            import { normaliseManifest } from './src/manifest.js'
+            const m = normaliseManifest(JSON.parse(readFileSync('ultra/index.json', 'utf8')))
+            const [fine, next] = m.levels
+            const ok = m.levels.length === 2 && fine.tileCount === 2 && Math.abs(fine.tileDuration - 15) < 0.1 &&
+              fine.columnsPerSecond > 340 && Math.abs(next.columnsPerSecond - 86) < 1 && next.samplesPerColumn === 4 * fine.samplesPerColumn
+            if (!ok) { console.error(m.levels); process.exit(1) }
+          "

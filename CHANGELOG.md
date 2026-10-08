@@ -19,10 +19,10 @@
 - `tools/make-tiles.sh`: makes tiles with ffmpeg, calibrated to match the
   Spectrogram plugin with `scale: 'linear', colorMap: 'gray'` at its default
   loudness, or at others given as `--gain-db` and `--range-db`.
-  - Makes the finest level at about 86 columns a second, and coarser ones
-    each four times coarser until one tile covers the recording. Each pixel of
-    a coarser level keeps the loudest of those it covers, so that short sounds
-    still show.
+  - Makes the finest level at about 86 columns a second (about 344, in tiles
+    a quarter as long, above 96 kHz), and coarser ones each four times coarser
+    until one tile covers the recording. Each pixel of a coarser level keeps
+    the loudest of those it covers, so that short sounds still show.
   - Tiles a whole folder into the same paths, `--jobs` at a time, passing over
     recordings already tiled so that a stopped run can be started again.
   - Writes only into a folder that is empty or holds its own earlier tiles.

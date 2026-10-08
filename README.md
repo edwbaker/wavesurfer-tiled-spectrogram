@@ -179,7 +179,10 @@ plugin, the tiles stay at the level they were.
 
 `make-tiles.sh` makes the finest level at about 86 columns a second, and each
 coarser one with four times fewer, until one tile covers the whole recording.
-The coarser levels add about a third to the space the tiles take.
+The coarser levels add about a third to the space the tiles take. Above 96 kHz
+it starts a level finer, at about 344 columns a second in 15-second tiles, as
+a column of 86 a second would there combine several FFT windows: zoomed in,
+short ultrasonic pulses then keep their timing.
 
 ### One recording per plugin
 

@@ -169,8 +169,10 @@ than CSS pixels.
 - **Columns:** every column is a whole number of samples, so that columns
   never drift against the audio.
 - **Levels:** the finest has about 86 columns a second, unless told
-  otherwise. Each coarser level has four times fewer, until one tile covers
-  the whole recording. Every level's `samplesPerColumn` is a whole multiple of
+  otherwise, or about 344 above 96 kHz, in tiles a quarter as long: there a
+  column of 86 a second would combine three or more FFT windows, and lose the
+  timing of short sounds. Each coarser level has four times fewer, until one
+  tile covers the whole recording. Every level's `samplesPerColumn` is a whole multiple of
   the finest's, so that column edges line up from level to level.
 - **Coarser levels** are made from the finest: each of their pixels keeps the
   loudest of the pixels it covers in its row, so that a sound shorter than a

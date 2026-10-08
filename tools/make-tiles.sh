@@ -3,7 +3,10 @@
 # resolutions (levels), and the index.json that describes them (see SPEC.md):
 # greyscale JPEG tiles in OUTDIR/<samples a column>/, the finest level at about
 # --pps columns a second and each coarser one four times coarser, until one
-# tile covers the recording. A coarser level is made from the one below it,
+# tile covers the recording. Above 96 kHz the finest level is four times finer
+# again, in tiles a quarter as long, unless --pps or --tile-seconds says
+# otherwise: a column of 86 a second would there combine three or more FFT
+# windows, and lose the timing of short sounds. A coarser level is made from the one below it,
 # each pixel keeping the loudest of the four it covers in its row, so that
 # short sounds still show. Beside them go the recording's waveform peaks for
 # each level, in OUTDIR/peaks-<samples a column>.json, for a player that
@@ -19,8 +22,10 @@
 # OUTDIR must be empty or hold only tiles made before, which are replaced.
 # Anything else in it is taken as a sign of a mistake, and refused.
 #
-#   --tile-seconds S   seconds a tile covers, near enough (60)
-#   --pps N            columns a second, near enough (86)
+#   --tile-seconds S   seconds a tile of the finest level covers, near enough
+#                      (60; 15 above 96 kHz)
+#   --pps N            columns a second of the finest level, near enough
+#                      (86; 344 above 96 kHz)
 #   --height H         rows; the FFT is 2*H points (256, a 512-point FFT)
 #   --channel C        the channel shown, counting from 0 (0)
 #   --gain-db G        loudness as wavesurfer.js's Spectrogram plugin's gainDB:
@@ -51,6 +56,8 @@ gain_db=20
 range_db=80
 quality=12
 calibration=""
+pps_given=0
+tile_seconds_given=0
 peaks=1
 jobs=1
 force=0
@@ -65,8 +72,8 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "$1 needs a value"
       opts+=("$1" "$2")
       case "$1" in
-        --tile-seconds) tile_seconds="$2" ;;
-        --pps) pps="$2" ;;
+        --tile-seconds) tile_seconds="$2"; tile_seconds_given=1 ;;
+        --pps) pps="$2"; pps_given=1 ;;
         --height) height="$2" ;;
         --channel) channel="$2" ;;
         --gain-db) gain_db="$2" ;;
@@ -182,6 +189,14 @@ rate=$(probe sample_rate "$input")
 channels=$(probe channels "$input")
 [ -n "$rate" ] || die "no audio in $input"
 [ "$channel" -lt "$channels" ] || die "$input has $channels channels, so there is no channel $channel"
+
+# Above 96 kHz a 512-point FFT window is under a third of a column of 86 a
+# second, so the finest level is four times finer, in tiles four times
+# shorter, and the next level is what lower rates have finest
+if [ "$rate" -gt 96000 ] && [ "$pps_given" -eq 0 ] && [ "$tile_seconds_given" -eq 0 ]; then
+  pps=$((pps * 4))
+  tile_seconds=$(awk -v s="$tile_seconds" 'BEGIN { print s / 4 }')
+fi
 
 # Loudness in ffmpeg's terms: its dynamic range, and the level it shows as
 # black. ffmpeg measures a sine 2 dB lower than wavesurfer.js does, as found by
