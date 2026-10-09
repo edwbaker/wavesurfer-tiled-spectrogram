@@ -2,7 +2,8 @@
 
 A [wavesurfer.js](https://wavesurfer.xyz) plugin that shows a spectrogram made
 in advance, from image tiles. Only the tiles near what is on screen are
-fetched.
+fetched. Try it in the
+[live demo](https://wavesurfer-tiled-spectrogram.acousti.cloud/demo/).
 
 wavesurfer.js's own Spectrogram plugin has to download and decode the whole
 recording, then run an FFT over all of it, before it can draw anything. For a
@@ -330,8 +331,14 @@ npm run serve     # the demo at http://localhost:8800/demo/
 The demo compares the tiles with the Spectrogram plugin (`?mode=tiles`,
 `?mode=builtin`, `?mode=preview`), streams the audio with the peaks
 (`?mode=stream`), and takes other colours (`?colorMap=igray`, `?colorMap=heat`),
-with either wavesurfer.js 7 or 8 (`?ws=8`). It zooms from 1 to 1000 pixels a
-second (`?zoom=10` starts at the coarser of its sample's two levels).
+with wavesurfer.js 8 or 7 (`?ws=7`) from cdn.audioblast.org. It zooms from 1 to
+1000 pixels a second (`?zoom=10` starts at the coarser of its sample's two
+levels).
+
+Each push to main publishes the demo to
+<https://wavesurfer-tiled-spectrogram.acousti.cloud/> with GitHub Pages
+([pages.yml](.github/workflows/pages.yml)), its sample made afresh, beside the
+landing page in `site/`.
 
 ## Licence
 

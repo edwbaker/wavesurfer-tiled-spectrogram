@@ -1,0 +1,56 @@
+name: Pages
+
+# Publishes the demo to https://wavesurfer-tiled-spectrogram.acousti.cloud/
+# with the landing page in site/, the plugin as built, and the demo's sample
+# recording and tiles made afresh. Needs Pages to deploy from GitHub Actions
+# (Settings → Pages → Source), where the custom domain is also set.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and one under way is left to finish
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - name: The demo's sample recording and tiles
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          npm run samples
+      - name: The site, laid out as the repository is, so that the demo finds ../dist/
+        run: |
+          mkdir -p _site/demo
+          cp site/index.html _site/
+          cp demo/index.html _site/demo/
+          cp -r demo/samples _site/demo/
+          cp -r dist _site/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

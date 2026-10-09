@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wavesurfer-tiled-spectrogram demo</title>
+<link rel="icon" href="data:,">
 <style>
   body { font: 14px/1.4 system-ui, sans-serif; margin: 1.5rem; max-width: 1000px; color: #222; background: #fff; }
   h1 { font-size: 1.3rem; }
@@ -17,7 +18,8 @@
 <body>
 <h1>wavesurfer-tiled-spectrogram</h1>
 <p>A spectrogram made in advance, shown from image tiles: only the tiles in view are fetched, at the
-resolution the zoom needs. Choose what to show; the address bar remembers it.</p>
+resolution the zoom needs. Choose what to show; the address bar remembers it. The plugin's source and
+documentation are <a href="https://github.com/edwbaker/wavesurfer-tiled-spectrogram">on GitHub</a>.</p>
 <form id="controls">
   <fieldset>
     <label>Audio <input name="audio" size="50"></label>
@@ -30,7 +32,7 @@ resolution the zoom needs. Choose what to show; the address bar remembers it.</p
     <label><input type="radio" name="mode" value="builtin"> Spectrogram plugin only</label>
   </fieldset>
   <fieldset>
-    <label>wavesurfer.js <select name="ws"><option value="7">7.10.1</option><option value="8">8.0.1</option></select></label>
+    <label>wavesurfer.js <select name="ws"><option value="7">7.10.1</option><option value="8">8.0.2</option></select></label>
     <label>Colours <select name="colorMap"><option value="gray">gray</option><option value="igray">igray</option><option value="heat">a list of 256 (heat)</option></select></label>
     <label>Rows <input name="rows" type="number" value="120" min="20" max="512"></label>
     <label>Sample rate <input name="rate" type="number" value="44100"></label>
@@ -50,7 +52,7 @@ resolution the zoom needs. Choose what to show; the address bar remembers it.</p
     audio: params.get('audio') || 'samples/demo.wav',
     tiles: params.get('tiles') || 'samples/demo/index.json',
     mode: params.get('mode') || 'preview',
-    ws: params.get('ws') || '7',
+    ws: params.get('ws') || '8',
     colorMap: params.get('colorMap') || 'gray',
     rows: Number(params.get('rows') || 120),
     rate: Number(params.get('rate') || 44100),
@@ -61,7 +63,9 @@ resolution the zoom needs. Choose what to show; the address bar remembers it.</p
     const field = form.elements[name]
     if (field instanceof RadioNodeList) field.value = value; else field.value = value
   }
-  const base = settings.ws === '8' ? 'https://unpkg.com/wavesurfer.js@8.0.1/dist/' : '../node_modules/wavesurfer.js/dist/'
+  // wavesurfer.js and its plugins from cdn.audioblast.org, so that the demo
+  // runs the same here and on GitHub Pages
+  const base = 'https://cdn.audioblast.org/wavesurfer/' + (settings.ws === '7' ? '7.10.1' : '8.0.2') + '/'
   const scripts = [base + 'wavesurfer.min.js', base + 'plugins/timeline.min.js', base + 'plugins/regions.min.js',
                    base + 'plugins/spectrogram.min.js', '../dist/tiled-spectrogram.min.js']
   function load(i) {

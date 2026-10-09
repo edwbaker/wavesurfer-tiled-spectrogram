@@ -1,6 +1,6 @@
 // A static file server for the demo, with no dependencies: serves this
-// repository (so the demo can reach dist/ and node_modules/) on port 8800, or
-// the port given as the first argument.
+// repository (so the demo can reach dist/) on port 8800, or the port given as
+// the first argument.
 import { createReadStream, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join, normalize, resolve, sep } from 'node:path'

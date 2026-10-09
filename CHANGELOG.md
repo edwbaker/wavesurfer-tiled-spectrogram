@@ -31,3 +31,5 @@
     `peaks`, so that a player can stream the audio instead of decoding it.
 - The demo can stream the audio with the peaks, show other colours, and zoom
   from one level to the other.
+- The demo is published to GitHub Pages, with a landing page, and loads
+  wavesurfer.js 8.0.2 or 7.10.1 from cdn.audioblast.org.

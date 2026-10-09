@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wavesurfer-tiled-spectrogram</title>
+<meta name="description" content="A wavesurfer.js plugin that shows a spectrogram made in advance, from image tiles">
+<link rel="icon" href="data:,">
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 40rem; color: #222; background: #fff; }
+  h1 { font-size: 1.5rem; }
+  a { color: #1b6b4a; }
+  a.demo { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; background: #52b788; color: #000; font-weight: 600; text-decoration: none; }
+  a.demo:hover { background: #40a274; }
+  code { font: 0.9em ui-monospace, monospace; }
+  li { margin-bottom: 0.25rem; }
+</style>
+</head>
+<body>
+<h1>wavesurfer-tiled-spectrogram</h1>
+<p>A <a href="https://wavesurfer.xyz">wavesurfer.js</a> plugin that shows a spectrogram made in advance, from
+image tiles. Only the tiles near what is on screen are fetched, at the resolution the zoom needs.</p>
+<p>wavesurfer.js's own Spectrogram plugin has to download and decode the whole recording, then run an FFT over
+all of it, before it can draw anything. For a long recording that takes tens of seconds, and for very long or
+ultrasonic ones the browser may not manage it at all. Tiles made beforehand can be shown at once, whatever the
+recording's length or sample rate.</p>
+<p><a class="demo" href="demo/">Try the demo</a></p>
+<p>Its recording is 70 seconds of test signal, a 5 kHz tone loud then quiet and then noise, tiled afresh
+each time the site is published. It compares the tiles with the Spectrogram plugin, streams the audio
+with the waveform's peaks instead of decoding it, zooms from one level of tiles to the other, and shows
+them in other colours.</p>
+<ul>
+  <li><b>Stand-in or standalone:</b> the tiles stand in for the Spectrogram plugin until it has drawn its
+    own, or are the spectrogram on their own, with no audio decoded.</li>
+  <li><b>Zooms out:</b> the spectrogram can be tiled at several resolutions, so a whole recording of hours
+    on screen takes a tile or two.</li>
+  <li><b>Simple format:</b> a manifest and images, made with ffmpeg by <code>tools/make-tiles.sh</code>, or by
+    anything else that writes the same format.</li>
+  <li><b>Small:</b> about 12 KB minified, with no dependencies, for wavesurfer.js 7.10 and 8.</li>
+</ul>
+<p>The source, documentation and tile format (<a
+href="https://github.com/edwbaker/wavesurfer-tiled-spectrogram/blob/main/SPEC.md">SPEC.md</a>) are
+<a href="https://github.com/edwbaker/wavesurfer-tiled-spectrogram">on GitHub</a>. MIT licence.</p>
+</body>
+</html>
