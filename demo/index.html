@@ -22,8 +22,9 @@ resolution the zoom needs. Choose what to show; the address bar remembers it. Th
 documentation are <a href="https://github.com/edwbaker/wavesurfer-tiled-spectrogram">on GitHub</a>.</p>
 <form id="controls">
   <fieldset>
-    <label>Audio <input name="audio" size="50"></label>
-    <label>Tiles <input name="tiles" size="40"></label>
+    <label>audioBLAST recording <input name="recording" size="20" placeholder="source/id"></label>
+    or <label>audio <input name="audio" size="40"></label>
+    <label>and tiles <input name="tiles" size="30"></label>
   </fieldset>
   <fieldset>
     <label><input type="radio" name="mode" value="preview"> Tiles until the Spectrogram plugin is ready</label>
@@ -44,11 +45,15 @@ documentation are <a href="https://github.com/edwbaker/wavesurfer-tiled-spectrog
   </fieldset>
 </form>
 <div id="player"></div>
+<p id="credit"></p>
 <p id="status"></p>
 <script>
   // Settings from the address bar, so that a view can be shared and reloaded
   const params = new URLSearchParams(location.search)
   const settings = {
+    // A recording in audioBLAST, as source/id, brings its own audio, tiles and
+    // sample rate; with none, the audio and tiles given are shown
+    recording: params.has('recording') ? params.get('recording') : 'bio.acousti.ca/10015',
     audio: params.get('audio') || 'samples/demo.wav',
     tiles: params.get('tiles') || 'samples/demo/index.json',
     mode: params.get('mode') || 'preview',
@@ -89,9 +94,54 @@ documentation are <a href="https://github.com/edwbaker/wavesurfer-tiled-spectrog
     })
   }
 
-  function start() {
+  // A recording in audioBLAST, with the addresses of its audio and tiles, its
+  // sample rate and whom to credit
+  async function lookUp(recording) {
+    const cut = recording.indexOf('/')
+    if (cut < 1) throw new Error('give the audioBLAST recording as source/id')
+    const query = new URLSearchParams({ output: 'JSON', source: recording.slice(0, cut), id: recording.slice(cut + 1) })
+    const response = await fetch('https://api.audioblast.org/data/recordings/?' + query)
+    if (!response.ok) throw new Error('audioBLAST could not be asked: ' + response.status)
+    const found = (await response.json()).data[0]
+    if (!found) throw new Error('audioBLAST has no recording ' + recording)
+    if (!found.spectrogram_url) throw new Error('audioBLAST has no tiles of ' + recording)
+    return found
+  }
+
+  // The recording's credit, as its licence asks
+  function credit(found) {
+    const link = (href, text) => {
+      if (!href) return text
+      const a = document.createElement('a')
+      a.href = href
+      a.textContent = text
+      return a
+    }
+    const cc = /creativecommons\.org\/licenses\/([a-z-]+)\/([\d.]+)/.exec(found.license)
+    const parts = ['Recording ', link(found.info_url, found.source + ' ' + found.id)]
+    if (found.taxon) parts.push(': ', Object.assign(document.createElement('i'), { textContent: found.taxon }))
+    if (found.author) parts.push(', by ' + found.author)
+    if (found.rights_holder) parts.push(', © ' + found.rights_holder)
+    parts.push(', ', found.license ? link(found.license, cc ? 'CC ' + cc[1].toUpperCase() + ' ' + cc[2] : 'licence') : 'licence unknown', '.')
+    document.getElementById('credit').append(...parts)
+  }
+
+  async function start() {
     const t0 = performance.now()
     const ms = () => Math.round(performance.now() - t0) + ' ms'
+    if (settings.recording) {
+      let found
+      try {
+        found = await lookUp(settings.recording)
+      } catch (error) {
+        say(ms() + ' ' + error.message)
+        return
+      }
+      Object.assign(settings, { audio: found.filename, tiles: found.spectrogram_url, rate: Number(found.sample_rate) || settings.rate })
+      for (const name of ['audio', 'tiles', 'rate']) form.elements[name].value = settings[name]
+      credit(found)
+      say(ms() + ' found in audioBLAST: ' + found.duration + ' s at ' + found.sample_rate + ' Hz')
+    }
     const plugins = [WaveSurfer.Timeline.create({ height: 20 }), WaveSurfer.Regions.create()]
     // Both plugins are given the same colours, so that they look the same
     const colorMap = settings.colorMap === 'heat' ? heat() : settings.colorMap

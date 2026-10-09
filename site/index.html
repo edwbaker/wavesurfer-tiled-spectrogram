@@ -25,10 +25,13 @@ all of it, before it can draw anything. For a long recording that takes tens of 
 ultrasonic ones the browser may not manage it at all. Tiles made beforehand can be shown at once, whatever the
 recording's length or sample rate.</p>
 <p><a class="demo" href="demo/">Try the demo</a></p>
-<p>Its recording is 70 seconds of test signal, a 5 kHz tone loud then quiet and then noise, tiled afresh
-each time the site is published. It compares the tiles with the Spectrogram plugin, streams the audio
-with the waveform's peaks instead of decoding it, zooms from one level of tiles to the other, and shows
-them in other colours.</p>
+<p>It plays the song of a grasshopper, <i>Chorthippus biguttulus</i>, after a spoken introduction, from the
+Natural History Museum's sound archive on <a href="https://bio.acousti.ca/node/10015">BioAcoustica</a>.
+Its audio and tiles come from audioBLAST, which can give any other recording it has tiled: try
+<a href="demo/?recording=bio.acousti.ca/10753&amp;mode=stream">nine minutes of a mole cricket</a>, streamed, or
+<a href="demo/?recording=bio.acousti.ca/51959&amp;mode=stream">a katydid's ultrasound</a>, recorded at 200 kHz.
+The demo compares the tiles with the Spectrogram plugin, streams the audio with the waveform's peaks
+instead of decoding it, zooms from one level of tiles to another, and shows them in other colours.</p>
 <ul>
   <li><b>Stand-in or standalone:</b> the tiles stand in for the Spectrogram plugin until it has drawn its
     own, or are the spectrogram on their own, with no audio decoded.</li>

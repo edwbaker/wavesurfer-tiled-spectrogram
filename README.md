@@ -324,21 +324,24 @@ npm install
 npm test          # node --test
 npm run build     # dist/: the ES module and the minified UMD build
 npm run check     # ES2020 check of dist/
-npm run samples   # the demo's sample recording and tiles (needs ffmpeg)
+npm run samples   # a test signal and its tiles, for the demo (needs ffmpeg)
 npm run serve     # the demo at http://localhost:8800/demo/
 ```
 
-The demo compares the tiles with the Spectrogram plugin (`?mode=tiles`,
-`?mode=builtin`, `?mode=preview`), streams the audio with the peaks
-(`?mode=stream`), and takes other colours (`?colorMap=igray`, `?colorMap=heat`),
-with wavesurfer.js 8 or 7 (`?ws=7`) from cdn.audioblast.org. It zooms from 1 to
-1000 pixels a second (`?zoom=10` starts at the coarser of its sample's two
-levels).
+The demo shows a recording in audioBLAST, given as its source and ID
+(`?recording=bio.acousti.ca/10015`), whose audio, tiles and sample rate it looks
+up with audioBLAST's API: any recording there with tiles will do. Given none
+(`?recording=`), it shows the audio and tiles given instead, by default the test
+signal from `npm run samples`. It compares the tiles with the Spectrogram plugin
+(`?mode=tiles`, `?mode=builtin`, `?mode=preview`), streams the audio with the
+peaks (`?mode=stream`), and takes other colours (`?colorMap=igray`,
+`?colorMap=heat`), with wavesurfer.js 8 or 7 (`?ws=7`) from cdn.audioblast.org.
+It zooms from 1 to 1000 pixels a second (`?zoom=10` starts at the coarser of the
+recording's two levels).
 
 Each push to main publishes the demo to
 <https://wavesurfer-tiled-spectrogram.acousti.cloud/> with GitHub Pages
-([pages.yml](.github/workflows/pages.yml)), its sample made afresh, beside the
-landing page in `site/`.
+([pages.yml](.github/workflows/pages.yml)), beside the landing page in `site/`.
 
 ## Licence
 
