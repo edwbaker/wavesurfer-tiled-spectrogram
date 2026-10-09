@@ -147,6 +147,18 @@ test("a manifest of several channels has their mix as its default view, and each
   assert.deepEqual(channelViews(normaliseManifest(aStereoManifest({ views: undefined }))), [])
 })
 
+test('a normalised manifest is normalised again unchanged, as a page checking it before the plugin does has it', () => {
+  for (const raw of [aManifest({}), aManifest({ channel: 1, peaks: somePeaks() }), aStereoManifest({})]) {
+    const once = normaliseManifest(raw)
+    const twice = normaliseManifest(once)
+    assert.deepEqual(twice, once)
+    assert.deepEqual(channelViews(twice), channelViews(once))
+  }
+  // A view listed of the default's channels is the default
+  const listed = normaliseManifest(aStereoManifest({ views: [{ channels: [0, 1], levels: [aLevel(512)] }] }))
+  assert.deepEqual(listed.views.map((view) => view.channels), [[0, 1]])
+})
+
 test('views, and channels, that cannot be shown are refused', () => {
   assert.throws(() => normaliseManifest(aStereoManifest({ views: 'ch0' })), /views must be a list/)
   assert.throws(() => normaliseManifest(aStereoManifest({ views: [null] })), /view 0 is not an object/)

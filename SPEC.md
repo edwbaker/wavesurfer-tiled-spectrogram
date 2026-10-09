@@ -165,6 +165,8 @@ of `views` is another view, with fields of the same names:
   peaks, over the default view's spectrogram of them mixed.
 - Every view covers the same `duration` and frequencies. A reader chooses
   between a view's levels and peaks as below.
+- An entry of `views` showing the same channels as the default view is the
+  default view, and is passed over.
 
 ## Choosing a level
 

@@ -77,7 +77,9 @@ function channelList(value, name) {
  * manifest's own levels and peaks, and the rest are those the manifest lists.
  * Each has the `channels` it shows, mixed where there are several, and its own
  * `levels` and `peaks`. A manifest of version 1 has one, of its `channel`.
- * `channels` and `channelCount` are filled in from them too.
+ * `channels` and `channelCount` are filled in from them too. A view listed of
+ * the default's channels is the default, so a normalised manifest, which
+ * lists the default first, is normalised again unchanged.
  *
  * @param {object} manifest
  * @returns {object}
@@ -108,7 +110,10 @@ export function normaliseManifest(manifest) {
     manifest.views.forEach((view, n) => {
       const prefix = 'view ' + n + ' '
       if (!view || typeof view !== 'object') throw new Error('Manifest ' + prefix + 'is not an object')
-      views.push(Object.assign({ channels: channelList(view.channels, prefix + 'channels') }, normaliseView(view, duration, prefix)))
+      const shown = channelList(view.channels, prefix + 'channels')
+      const normalised = normaliseView(view, duration, prefix)
+      const isDefault = shown.length === channels.length && shown.every((channel, k) => channel === channels[k])
+      if (!isDefault) views.push(Object.assign({ channels: shown }, normalised))
     })
   }
   const highest = Math.max.apply(null, views.map((view) => Math.max.apply(null, view.channels)))
