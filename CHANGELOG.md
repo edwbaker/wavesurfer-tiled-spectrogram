@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-10-09)
 
 - First version: the TiledSpectrogram plugin for wavesurfer.js 7.10 and 8.
   - Fetches tiles lazily, and follows scroll and zoom.
