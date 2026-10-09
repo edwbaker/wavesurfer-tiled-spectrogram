@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chooseLevel, choosePeaks, normaliseManifest, peaksUrl, tileSpan, tileUrl } from '../src/manifest.js'
+import { channelViews, chooseLevel, choosePeaks, normaliseManifest, peaksUrl, tileSpan, tileUrl } from '../src/manifest.js'
 
 // Two levels, listed coarsest first to show they need not be in order: 86 and
 // 21.5 columns a second, as make-tiles.sh makes them at 44.1 kHz
@@ -102,6 +102,62 @@ test("a level's tiles, and peaks, are found beside their manifest", () => {
   assert.equal(tileUrl(listed.levels[0], 2, 'https://h.example/a/index.json'), 'https://h.example/a/img/2.png')
   const twice = normaliseManifest(aManifest({ levels: [aLevel(512, { tiles: '{index}/{index}.jpg' })] }))
   assert.equal(tileUrl(twice.levels[0], 4), '4/4.jpg')
+})
+
+// A stereo recording as make-tiles.sh tiles it: the channels mixed, then each
+// on its own in ch0/ and ch1/, ch1's with no peaks
+function aStereoManifest(changes) {
+  const view = (channel, peaks) => Object.assign({
+    channels: [channel],
+    levels: [aLevel(2048, { tiles: 'ch' + channel + '/2048/{index}.jpg' }), aLevel(512, { tiles: 'ch' + channel + '/512/{index}.jpg' })],
+  }, peaks ? { peaks: [{ pointsPerSecond: 21.533203, url: 'ch' + channel + '/peaks-2048.json' }, { pointsPerSecond: 86.132812, url: 'ch' + channel + '/peaks-512.json' }] } : {})
+  return aManifest(Object.assign({ version: 1.1, channelCount: 2, channels: [0, 1], peaks: somePeaks(), views: [view(0, true), view(1, false)] }, changes))
+}
+
+test('a manifest of version 1 is one view, of the channel it shows', () => {
+  const m = normaliseManifest(aManifest({}))
+  assert.equal(m.views.length, 1)
+  assert.deepEqual(m.views[0].channels, [0])
+  assert.equal(m.views[0].levels, m.levels)
+  assert.equal(m.channelCount, 1)
+  assert.deepEqual(channelViews(m), [0])
+
+  const right = normaliseManifest(aManifest({ channel: 1 }))
+  assert.deepEqual(right.channels, [1])
+  assert.equal(right.channelCount, 2)
+  assert.deepEqual(channelViews(right), [0])
+})
+
+test("a manifest of several channels has their mix as its default view, and each channel's view", () => {
+  const m = normaliseManifest(aStereoManifest({}))
+  assert.deepEqual(m.views.map((view) => view.channels), [[0, 1], [0], [1]])
+  assert.equal(m.channelCount, 2)
+  assert.equal(m.views[0].levels, m.levels, 'the default view is the manifest\'s own levels and peaks')
+  assert.equal(m.views[0].peaks, m.peaks)
+  assert.deepEqual(m.views[2].levels.map((level) => level.tiles), ['ch1/512/{index}.jpg', 'ch1/2048/{index}.jpg'], 'finest first')
+  // Levels and peaks are chosen in a view as in the manifest
+  assert.equal(chooseLevel(m.views[1], 344).tiles, 'ch0/512/{index}.jpg')
+  assert.equal(chooseLevel(m.views[2], 5).tiles, 'ch1/2048/{index}.jpg')
+  assert.equal(choosePeaks(m.views[1], 50).url, 'ch0/peaks-512.json')
+  assert.equal(choosePeaks(m.views[2], 50), null)
+  // Split, each channel's view in channel order
+  assert.deepEqual(channelViews(m), [1, 2])
+  assert.deepEqual(channelViews(normaliseManifest(aStereoManifest({ views: [m.views[2], m.views[1]].map((view) => ({ channels: view.channels, levels: [aLevel(512)] })) }))), [2, 1])
+  // Only the mix: nothing to split
+  assert.deepEqual(channelViews(normaliseManifest(aStereoManifest({ views: undefined }))), [])
+})
+
+test('views, and channels, that cannot be shown are refused', () => {
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: 'ch0' })), /views must be a list/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: [null] })), /view 0 is not an object/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: [{ levels: [aLevel(512)] }] })), /view 0 channels must list channels/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: [{ channels: [-1], levels: [aLevel(512)] }] })), /view 0 channels must list channels/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: [{ channels: [0] }] })), /view 0 has no levels/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: [{ channels: [0], levels: [aLevel(512, { width: 0 })] }] })), /view 0 level 0 width/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ views: [{ channels: [0], levels: [aLevel(512)], peaks: [{}] }] })), /view 0 peaks 0 has no url/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ channels: [] })), /channels must list channels/)
+  assert.throws(() => normaliseManifest(aStereoManifest({ channelCount: 1 })), /channelCount/)
+  assert.throws(() => normaliseManifest(aManifest({ channel: 0.5 })), /channel must be a channel/)
 })
 
 test("every tile of a level spans its tileDuration, the last ending with the recording", () => {

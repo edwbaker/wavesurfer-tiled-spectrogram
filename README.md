@@ -239,9 +239,11 @@ ends by listing them, and exits with an error if there were any.
 | `url` | | Address of the manifest. |
 | `manifest` | | The manifest itself, instead of `url`. |
 | `baseUrl` | page address | Where tiles are resolved from when `manifest` is given. |
-| `height` | `120` | CSS pixels high. |
+| `height` | `120` | CSS pixels high, of each view shown. |
+| `view` | `0` | The view shown, by its place in the manifest's views (see [Channels](#channels)): `0` is the default. |
+| `split` | `false` | Show each channel's view, one above another, instead. |
 | `lookahead` | `1` | Tiles to fetch on either side of those in view. |
-| `maxLoaded` | `12` | Tiles kept at most; the furthest from view are let go first. |
+| `maxLoaded` | `12` | Tiles kept at most, of each view; the furthest from view are let go first. |
 | `colorMap` | `'gray'` | How grey tiles are coloured: `'gray'` as they are, `'igray'` inverted, or a list of 256 colours (see [Colours](#colours)). |
 
 ## Colours
@@ -273,33 +275,62 @@ another site than the page's therefore need that site to allow it with CORS
 (`Access-Control-Allow-Origin`). Where it does not, they are shown grey, and
 the console says why. Tiles that are not grey are always shown as they are.
 
+## Channels
+
+A manifest of several channels (version 1.1, as `make-tiles.sh` makes one)
+has **views**: by default the channels mixed, and then each channel on its own.
+The plugin shows the default, or the view given as `view`, or with `split` each
+channel's, one above another, each `height` high.
+
+```js
+tiles.on('load', () => {
+  const views = tiles.getViews() // [{channels: [0, 1], …}, {channels: [0], …}, {channels: [1], …}]
+  tiles.setView(2) // the right channel alone
+  tiles.setSplit(true) // left above right
+})
+```
+
+`handOver()` gives way to wavesurfer.js's Spectrogram plugin only where that
+plugin shows the same: channel 0 alone, or, split, every channel to one given
+`splitChannels`. Showing the mix, or another channel, the tiles stay. Once
+handed over, the view stays as it is.
+
 ## Events
 
 | Event | |
 |---|---|
 | `load` | The manifest has been loaded and checked; the listener is passed it. Always after `WaveSurfer.create()` has returned, even when the manifest is given. |
-| `level` | The level to show has been chosen, at first or as the player zooms; the listener is passed it, one of the manifest's `levels`. |
-| `tileload` | A tile has arrived; the listener is passed its index and its level. |
+| `level` | The level to show has been chosen, at first or as the player zooms; the listener is passed it, one of the levels of the first view shown. |
+| `view` | The views shown have changed, by `setView()` or `setSplit()`; the listener is passed them, from the top. |
+| `tileload` | A tile has arrived; the listener is passed its index, its level and its view. |
 | `ready` | The tiles in view have all arrived (or failed). |
 | `error` | The manifest or a tile could not be had. A tile is never retried. |
 | `handover` | The Spectrogram plugin is ready, and the tiles have moved beneath it. No more are fetched. |
 
 ## Methods
 
-`getManifest()`, `getLevel()` (the level shown, one of the manifest's
-`levels`), `getFrequencyRange()` (`{min, max}` in Hz, for drawing an axis),
-`show()`, `hide()`, `handOver(spectrogramPlugin)`.
+`getManifest()`, `getLevel()` (the level shown, of the first view shown),
+`getFrequencyRange()` (`{min, max}` in Hz, for drawing an axis), `show()`,
+`hide()`, `handOver(spectrogramPlugin)`, and for [Channels](#channels):
+`getViews()`, `getView()` (the one chosen), `getShownViews()` (those shown,
+from the top), `setView(index)`, `setSplit(split)` and `isSplit()`.
 
 A page can use these before it makes the player:
 
 - `TiledSpectrogram.normaliseManifest(manifest)` checks a manifest as the
   plugin will. It returns the manifest with what may be left out filled in,
   its `levels` and `peaks` each in order from the finest, and each level given
-  its `columnsPerSecond`. Or it throws an Error saying what is wrong.
+  its `columnsPerSecond`. It is given its `views` too, each with the
+  `channels` it shows and its own `levels` and `peaks`, the default first.
+  Or it throws an Error saying what is wrong.
 - `TiledSpectrogram.chooseLevel(manifest, pixelsPerSecond)` and
   `TiledSpectrogram.choosePeaks(manifest, pixelsPerSecond)` give the level, or
-  the peaks, for drawing that many pixels a second of the recording.
-  `choosePeaks` gives null where the manifest lists none.
+  the peaks, for drawing that many pixels a second of the recording, from the
+  manifest or from one of its views. `choosePeaks` gives null where it lists
+  none.
+- `TiledSpectrogram.channelViews(manifest)` gives the views of one channel
+  each, by their places in its `views`, in channel order: those shown split,
+  whose peaks a page can draw each channel's waveform from.
 - `TiledSpectrogram.peaksUrl(entry, baseUrl)` gives the address of one of the
   manifest's `peaks`, resolved against the manifest's own.
 
@@ -308,8 +339,9 @@ The ES module also exports them by name, with `tileUrl()` and `tileSpan()`.
 ## Styling
 
 The tiles are inside wavesurfer.js's shadow DOM. Style them with
-`::part(tiled-spectrogram)` and `::part(tiled-spectrogram-tile)`. Each tile is
-an `img`, or a `canvas` where it has been recoloured.
+`::part(tiled-spectrogram)`, `::part(tiled-spectrogram-row)` (a view's row)
+and `::part(tiled-spectrogram-tile)`. Each tile is an `img`, or a `canvas`
+where it has been recoloured.
 
 Before the audio is decoded, wavesurfer.js's Timeline plugin has no height.
 Reserving it keeps the tiles from moving down when it fills:

@@ -9,6 +9,14 @@
   mean of their samples, and each channel on its own too, in `ch0/`, `ch1/`, …,
   listed as views. `--channel C` still tiles channel C alone, and a recording of
   one channel is tiled as before.
+- The plugin shows views: the default, or another (`view`, `setView()`), or each
+  channel's one above another (`split`, `setSplit()`). `getViews()`,
+  `getView()`, `getShownViews()`, `isSplit()` and the `view` event say what
+  there is and what is shown. `handOver()` gives way only where the Spectrogram
+  plugin shows the same.
+- `normaliseManifest()` gives a manifest's `views`, `channels` and
+  `channelCount`; `chooseLevel()` and `choosePeaks()` take a view; and
+  `channelViews()` gives each channel's.
 
 ## 0.1.0 (2026-10-09)
 
