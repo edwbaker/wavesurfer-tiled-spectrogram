@@ -1,6 +1,6 @@
 {
   "name": "wavesurfer-tiled-spectrogram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A wavesurfer.js plugin that shows a precomputed spectrogram from image tiles, loading only the tiles in view",
   "type": "module",
   "license": "MIT",

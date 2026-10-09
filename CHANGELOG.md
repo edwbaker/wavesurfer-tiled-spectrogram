@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-09)
 
 - Manifest format, version 1.1: a recording of several channels can have
   views, each of one channel or several mixed. The manifest's own levels and
