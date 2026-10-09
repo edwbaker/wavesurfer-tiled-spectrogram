@@ -1,7 +1,8 @@
 name: Release
 
 # Stages each version on npm, for approval on npmjs.com, when its tag
-# (v0.1.0, …) is pushed. Needs a stage-only npm token as NPM_TOKEN.
+# (v0.1.0, …) is pushed, through trusted publishing: the package's
+# settings on npmjs.com trust this repository's release.yml.
 on:
   push:
     tags: ['v*']
@@ -25,8 +26,6 @@ jobs:
       - run: npm run build
       - run: npm run check
       - run: npm stage publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
