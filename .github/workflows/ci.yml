@@ -44,3 +44,30 @@ jobs:
               fine.columnsPerSecond > 340 && Math.abs(next.columnsPerSecond - 86) < 1 && next.samplesPerColumn === 4 * fine.samplesPerColumn
             if (!ok) { console.error(m.levels); process.exit(1) }
           "
+      - name: a stereo file is tiled mixed, and each channel on its own, as views of a version 1.1 manifest
+        run: |
+          ffmpeg -v error -f lavfi -i "sine=frequency=2000:sample_rate=44100:duration=70" \
+            -f lavfi -i "sine=frequency=8000:sample_rate=44100:duration=70" -filter_complex amerge=inputs=2 stereo.wav
+          bash tools/make-tiles.sh stereo.wav stereo
+          for view in stereo stereo/ch0 stereo/ch1; do
+            ffmpeg -v error -i "$view/512/0.jpg" -vf "crop=1:ih:iw/2:0" -f rawvideo -pix_fmt gray "$(echo "$view" | tr / _).raw"
+          done
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs'
+            import { normaliseManifest } from './src/manifest.js'
+            const m = JSON.parse(readFileSync('stereo/index.json', 'utf8'))
+            normaliseManifest(m)
+            const views = m.views.map((view) => view.channels.join() + ':' + view.levels[0].tiles).join(' ')
+            if (m.version !== 1.1 || m.channelCount !== 2 || m.channels.join() !== '0,1' ||
+                views !== '0:ch0/512/{index}.jpg 1:ch1/512/{index}.jpg') {
+              console.error(m.version, m.channelCount, m.channels, views); process.exit(1)
+            }
+            // The middle column of each view: loud (dark) at its channels' tones, silent (white) at the other's
+            const row = (hz) => Math.round(256 * (1 - hz / 22050) - 0.5)
+            const loudest = (file, hz) => { const c = readFileSync(file); let g = 255; for (let y = row(hz) - 3; y <= row(hz) + 3; y++) g = Math.min(g, c[y]); return g }
+            for (const [file, left, right] of [['stereo.raw', true, true], ['stereo_ch0.raw', true, false], ['stereo_ch1.raw', false, true]]) {
+              if ((loudest(file, 2000) < 128) !== left || (loudest(file, 8000) < 128) !== right) {
+                console.error(file, loudest(file, 2000), loudest(file, 8000)); process.exit(1)
+              }
+            }
+          "

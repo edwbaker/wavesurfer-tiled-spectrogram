@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Manifest format, version 1.1: a recording of several channels can have
+  views, each of one channel or several mixed. The manifest's own levels and
+  peaks are its default view; a reader of version 1 shows that.
+- `tools/make-tiles.sh` tiles a recording of several channels as their mix, the
+  mean of their samples, and each channel on its own too, in `ch0/`, `ch1/`, …,
+  listed as views. `--channel C` still tiles channel C alone, and a recording of
+  one channel is tiled as before.
+
 ## 0.1.0 (2026-10-09)
 
 - First version: the TiledSpectrogram plugin for wavesurfer.js 7.10 and 8.

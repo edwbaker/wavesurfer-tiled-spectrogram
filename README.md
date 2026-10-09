@@ -201,6 +201,11 @@ named by its samples a column: `512/0.jpg`, `512/1.jpg`, …, then `2048/0.jpg`,
 … for a recording at 44.1 kHz. Beside them go the recording's waveform peaks, a
 file for each level (`peaks-512.json`, …), left out with `--no-peaks`.
 
+A recording of several channels is tiled as their mix, and each channel on its
+own too, in `ch0/`, `ch1/`, …: views a player can choose between, or show one
+above another, listed in a manifest of version 1.1 (see Channels in
+[SPEC.md](SPEC.md)). `--channel C` tiles channel C alone.
+
 Given a folder, it tiles every audio file in it and in the folders within it,
 into the same paths under the output folder:
 
@@ -220,8 +225,9 @@ ends by listing them, and exits with an error if there were any.
 - It needs bash, ffmpeg and ffprobe. On Windows, run it from Git Bash or WSL.
 - It writes only into a folder that is empty or holds tiles it made before,
   which it replaces, so a mistaken output folder is refused, not overwritten.
-- While it works it keeps the channel shown as a 32-bit WAV in the temporary
-  folder (`TMPDIR`): about 640 MB for an hour at 44.1 kHz.
+- While it works it keeps what it is tiling, a channel or the channels mixed, as
+  a 32-bit WAV in the temporary folder (`TMPDIR`): about 640 MB for an hour at
+  44.1 kHz.
 - Tiles can be made by anything else that writes the format in
   [SPEC.md](SPEC.md). The plugin shows whatever images it is given, so they
   need not be greyscale.

@@ -1,4 +1,4 @@
-# Tiled spectrogram, version 1
+# Tiled spectrogram, version 1.1
 
 A spectrogram made in advance and cut into images along time, at one or more
 resolutions. Each image is a **tile**: a fixed stretch of the recording, all
@@ -72,7 +72,7 @@ Fields that hold for every level.
 | Field | Meaning |
 |---|---|
 | `type` | Always `"tiled-spectrogram"`. |
-| `version` | `1`. A reader refuses a major version it does not know. A minor version (e.g. `1.1`) only adds fields, which a reader may ignore. |
+| `version` | `1`, or `1.1` where the manifest has the channel fields below. A reader refuses a major version it does not know. A minor version (e.g. `1.1`) only adds fields, which a reader may ignore. |
 | `duration` | Seconds of audio the tiles cover. Every level covers all of it. |
 | `frequencyMax` | Hz at the top edge of every tile, in every level. |
 | `levels` | One or more levels (below), in any order. |
@@ -83,7 +83,10 @@ Fields that hold for every level.
 |---|---|
 | `frequencyMin` | Hz at the bottom edge of every tile; 0 if left out. |
 | `frequencyScale` | How frequency runs up a tile; only `"linear"` is defined in version 1. |
-| `sampleRate`, `channel`, `window` | How the spectrogram was computed: the recording's sample rate, the channel shown (from 0), and the FFT window. |
+| `sampleRate`, `channel`, `window` | How the spectrogram was computed: the recording's sample rate, the channel shown (from 0) where it shows one, and the FFT window. |
+| `channelCount` | How many channels the recording has. |
+| `channels` | The channels the manifest's own `levels` and `peaks` show, from 0: one, or several mixed (see Channels). In its place, `channel` alone means `[channel]`, and neither means `[0]`. |
+| `views` | Other views of the recording's channels (see Channels). |
 | `colorMap` | `"gray"`: white is quiet, black is loud. Grey level *g* is loudness 255 − *g* on a scale from 0 (quiet) to 255 (loud), so a reader can show such tiles in any colours. Tiles without it are shown as they are. |
 | `dbRange` | `[quiet, loud]`: the loudness, in dB, shown as the two ends of `colorMap`, in dB measured as wavesurfer.js's Spectrogram plugin measures them, `20 × log10(2 × \|X\| / fftSize)` for each bin of the windowed FFT `X`. The plugin's `gainDB` is `-loud` and its `rangeDB` is `loud - quiet`. |
 | `peaks` | The recording's waveform peaks, at one or more resolutions (below). |
@@ -114,7 +117,7 @@ Each entry of `levels` is the whole spectrogram at one resolution.
 ### Peaks
 
 Each entry of `peaks` is a file of the recording's waveform peaks: the lowest
-and highest sample of each stretch of it, for the channel the tiles show, in the
+and highest sample of each stretch of it, for the channels the tiles show, in the
 [BBC audiowaveform JSON format](https://github.com/bbc/audiowaveform/blob/master/doc/DataFormat.md),
 version 2. With them a player can draw the waveform and stream the audio rather
 than download and decode it. The file says its own sample rate, resolution and
@@ -125,6 +128,43 @@ bits, so the entry only has to say enough to choose between them.
 | `url` | Required. Where the file is, resolved as `tiles` is. |
 | `pointsPerSecond` | Required. Points a second, near enough to choose by. |
 | `samplesPerPixel` | Optional. Samples each point stands for, as the file says it. |
+
+## Channels
+
+A recording of more than one channel can be shown more than one way. Each way
+is a **view**: one channel, or several mixed. The manifest's own `levels` and
+`peaks` are its default view, and its `channels` say what that shows. Each entry
+of `views` is another view, with fields of the same names:
+
+| Field | Meaning |
+|---|---|
+| `channels` | Required. The channels the view shows, from 0. Several are mixed: the spectrogram and peaks are of the mean of their samples. |
+| `levels` | Required. The view's levels, as above. |
+| `peaks` | Optional. The view's peaks, as above. |
+
+```json
+{
+  "type": "tiled-spectrogram",
+  "version": 1.1,
+  "channelCount": 2,
+  "channels": [0, 1],
+  "levels": [ … ],
+  "peaks": [ … ],
+  "views": [
+    {"channels": [0], "levels": [ … ], "peaks": [ … ]},
+    {"channels": [1], "levels": [ … ], "peaks": [ … ]}
+  ]
+}
+```
+
+- A reader that knows nothing of views shows the default view, as it would a
+  manifest of version 1.
+- A reader may offer the views to choose between, or show several at once, one
+  above another, as wavesurfer.js shows split channels. Its waveform need not
+  show the same view: it may draw each channel's waveform, from those views'
+  peaks, over the default view's spectrogram of them mixed.
+- Every view covers the same `duration` and frequencies. A reader chooses
+  between a view's levels and peaks as below.
 
 ## Choosing a level
 
@@ -179,5 +219,8 @@ than CSS pixels.
   column still shows. Analysing the audio again with a longer step instead
   would skip the audio between windows, and miss short sounds.
 - **Peaks:** a file for each level, a point for each of its columns, 16-bit.
-- **Channel:** only one channel is shown (`channel`, 0 by default), as
-  wavesurfer.js's Spectrogram plugin shows only the first.
+- **Channels:** a recording of one channel has one view. One of several has its
+  channels mixed as the default view, as waveform peaks usually are, and a view
+  of each channel, with its tiles and peaks in `ch0/`, `ch1/` and so on.
+  `--channel C` makes a set of channel C alone, with no other views, as version
+  1 did.

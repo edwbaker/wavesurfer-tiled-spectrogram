@@ -10,7 +10,10 @@
 # each pixel keeping the loudest of the four it covers in its row, so that
 # short sounds still show. Beside them go the recording's waveform peaks for
 # each level, in OUTDIR/peaks-<samples a column>.json, for a player that
-# streams the audio rather than decoding it.
+# streams the audio rather than decoding it. A file of several channels is
+# tiled as their mix, the mean of their samples, and each channel is tiled on
+# its own too, in OUTDIR/ch<n>/, as views in the same manifest (version 1.1; see
+# Channels in SPEC.md).
 #
 #   make-tiles.sh [options] INPUT OUTDIR
 #
@@ -27,7 +30,8 @@
 #   --pps N            columns a second of the finest level, near enough
 #                      (86; 344 above 96 kHz)
 #   --height H         rows; the FFT is 2*H points (256, a 512-point FFT)
-#   --channel C        the channel shown, counting from 0 (0)
+#   --channel C        tile channel C alone, counting from 0 (all channels:
+#                      their mix, and each on its own)
 #   --gain-db G        loudness as wavesurfer.js's Spectrogram plugin's gainDB:
 #                      -G dB and above is black (20, the plugin's default)
 #   --range-db R       and as its rangeDB: dB from black down to white (80)
@@ -44,14 +48,16 @@
 # that ffmpeg's showspectrumpic drops none (it would otherwise lose the
 # remainder of each column and drift by tens of ms over a tile), and every
 # tile is trimmed or padded to exactly its columns' worth of samples. The file
-# is first decoded once to a mono WAV of the channel shown, so that each tile
-# can be cut from it exactly, whatever the file's format.
+# is first decoded once to a mono WAV of what is shown, a channel or the
+# channels mixed, so that each tile can be cut from it exactly, whatever the
+# file's format.
 set -euo pipefail
 
 tile_seconds=60
 pps=86
 height=256
 channel=0
+channel_given=0
 gain_db=20
 range_db=80
 quality=12
@@ -75,7 +81,7 @@ while [ $# -gt 0 ]; do
         --tile-seconds) tile_seconds="$2"; tile_seconds_given=1 ;;
         --pps) pps="$2"; pps_given=1 ;;
         --height) height="$2" ;;
-        --channel) channel="$2" ;;
+        --channel) channel="$2"; channel_given=1 ;;
         --gain-db) gain_db="$2" ;;
         --range-db) range_db="$2" ;;
         --quality) quality="$2" ;;
@@ -162,6 +168,17 @@ if [ -d "$outdir" ]; then
       peaks.json|peaks-*.json) grep -q '"samples_per_pixel"' "$f" ||
         die "$outdir/$name is not waveform peaks, so $outdir is not for tiles" ;;
       *.jpg) isNumber "${name%.jpg}" || die "$outdir holds $name, so it is not for tiles" ;;
+      ch*)
+        # A channel's own tiles, from tiling a file of several channels
+        if ! isNumber "${name#ch}" || [ ! -d "$f" ]; then die "$outdir holds $name, so it is not for tiles"; fi
+        for g in "$f"/*; do
+          [ -e "$g" ] || continue
+          leaf=${g##*/}
+          case "$leaf" in
+            index.json|peaks-*.json) ;;
+            *) if ! isNumber "$leaf" || [ ! -d "$g" ]; then die "$outdir/$name holds $leaf, so $outdir is not for tiles"; fi ;;
+          esac
+        done ;;
       *)
         if ! isNumber "$name" || [ ! -d "$f" ]; then die "$outdir holds $name, so it is not for tiles"; fi
         for g in "$f"/*; do
@@ -179,6 +196,8 @@ rm -f "$outdir/index.json"
 for f in "$outdir"/peaks.json "$outdir"/peaks-*.json "$outdir"/*.jpg; do [ ! -e "$f" ] || rm -f "$f"; done
 for f in "$outdir"/*; do
   if [ -d "$f" ] && isNumber "${f##*/}"; then rm -rf "${f:?}"; fi
+  name=${f##*/}
+  if [ -d "$f" ] && [ "${name#ch}" != "$name" ] && isNumber "${name#ch}"; then rm -rf "${f:?}"; fi
 done
 
 probe() {
@@ -209,7 +228,16 @@ awk -v d="$drange" -v l="$limit" 'BEGIN { exit !(d >= 10 && d <= 200 && l >= -10
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mono="$tmp/mono.wav"
-ffmpeg -v error -nostdin -y -i "$input" -map 0:a:0 -af "pan=mono|c0=c${channel}" \
+# What is shown: the channel asked for, or the only one; or else every channel
+# mixed, the mean of their samples, and each channel is then tiled on its own
+# too (below)
+views=0
+pan="c${channel}"
+if [ "$channel_given" -eq 0 ] && [ "$channels" -gt 1 ]; then
+  views=$channels
+  pan=$(awk -v n="$channels" 'BEGIN { for (c = 0; c < n; c++) printf "%s%.9g*c%d", (c ? "+" : ""), 1 / n, c }')
+fi
+ffmpeg -v error -nostdin -y -i "$input" -map 0:a:0 -af "pan=mono|c0=${pan}" \
   -c:a pcm_f32le -rf64 auto "$mono"
 samples=$(probe duration_ts "$mono")
 [ "${samples:-0}" -gt 0 ] || die "no samples decoded from $input"
@@ -357,29 +385,64 @@ if [ "$peaks" -eq 1 ]; then
   for level in "${levels[@]}"; do mv "$tmp/peaks-$level.json" "$outdir/peaks-$level.json"; done
 fi
 
+# Each channel on its own, in ch<n>/: a set of its own, made by this script
+# with --channel, at the same levels as the mix
+for ((c = 0; c < views; c++)); do
+  MAKE_TILES_DONE='' bash "$0" ${opts[@]+"${opts[@]}"} --channel "$c" "$input" "$outdir/ch$c" ||
+    die "could not tile channel $c of $input"
+done
+
 # The manifest is written last, and only once every tile has been
 awk -v rate="$rate" -v samples="$samples" -v width="$width" -v height="$height" -v levels="${levels[*]}" \
-    -v channel="$channel" -v drange="$drange" -v limit="$limit" -v gain="$gain_db" -v range="$range_db" \
-    -v calibration="$calibration" -v peaks="$peaks" 'BEGIN {
+    -v channel="$channel" -v views="$views" -v drange="$drange" -v limit="$limit" -v gain="$gain_db" \
+    -v range="$range_db" -v calibration="$calibration" -v peaks="$peaks" '
+function printLevels(prefix, pad,    k, s) {
+  for (k = 1; k <= count; k++) {
+    s = spc[k]
+    printf "%s{\"width\": %d, \"height\": %d, \"tileDuration\": %.9f, \"tileCount\": %d, \"tiles\": \"%s%d/{index}.jpg\", ", pad, width, height, width * s / rate, int((samples + width * s - 1) / (width * s)), prefix, s
+    printf "\"mimeType\": \"image/jpeg\", \"samplesPerColumn\": %d, \"pixelsPerSecond\": %.6f, \"fftSize\": %d}%s\n", s, rate / s, 2 * height, (k < count ? "," : "")
+  }
+}
+function printPeaks(prefix, pad,    k) {
+  for (k = 1; k <= count; k++) {
+    printf "%s{\"pointsPerSecond\": %.6f, \"samplesPerPixel\": %d, \"url\": \"%speaks-%d.json\"}%s\n", pad, rate / spc[k], spc[k], prefix, spc[k], (k < count ? "," : "")
+  }
+}
+BEGIN {
   count = split(levels, spc, " ")
   printf "{\n"
-  printf "  \"type\": \"tiled-spectrogram\",\n  \"version\": 1,\n"
+  printf "  \"type\": \"tiled-spectrogram\",\n  \"version\": %s,\n", (views > 0 ? "1.1" : "1")
   printf "  \"duration\": %.6f,\n", samples / rate
-  printf "  \"sampleRate\": %d,\n  \"channel\": %d,\n", rate, channel
+  if (views > 0) {
+    printf "  \"sampleRate\": %d,\n  \"channelCount\": %d,\n  \"channels\": [", rate, views
+    for (c = 0; c < views; c++) printf "%s%d", (c > 0 ? ", " : ""), c
+    printf "],\n"
+  } else {
+    printf "  \"sampleRate\": %d,\n  \"channel\": %d,\n", rate, channel
+  }
   printf "  \"frequencyMin\": 0,\n  \"frequencyMax\": %s,\n  \"frequencyScale\": \"linear\",\n", rate / 2
   printf "  \"window\": \"hann\",\n  \"colorMap\": \"gray\",\n"
   printf "  \"dbRange\": [%s, %s],\n", -gain - range, -gain
   printf "  \"levels\": [\n"
-  for (k = 1; k <= count; k++) {
-    s = spc[k]
-    printf "    {\"width\": %d, \"height\": %d, \"tileDuration\": %.9f, \"tileCount\": %d, \"tiles\": \"%d/{index}.jpg\", ", width, height, width * s / rate, int((samples + width * s - 1) / (width * s)), s
-    printf "\"mimeType\": \"image/jpeg\", \"samplesPerColumn\": %d, \"pixelsPerSecond\": %.6f, \"fftSize\": %d}%s\n", s, rate / s, 2 * height, (k < count ? "," : "")
-  }
+  printLevels("", "    ")
   printf "  ],\n"
   if (peaks == 1) {
     printf "  \"peaks\": [\n"
-    for (k = 1; k <= count; k++) {
-      printf "    {\"pointsPerSecond\": %.6f, \"samplesPerPixel\": %d, \"url\": \"peaks-%d.json\"}%s\n", rate / spc[k], spc[k], spc[k], (k < count ? "," : "")
+    printPeaks("", "    ")
+    printf "  ],\n"
+  }
+  if (views > 0) {
+    printf "  \"views\": [\n"
+    for (c = 0; c < views; c++) {
+      printf "    {\n      \"channels\": [%d],\n      \"levels\": [\n", c
+      printLevels("ch" c "/", "        ")
+      printf "      ]%s\n", (peaks == 1 ? "," : "")
+      if (peaks == 1) {
+        printf "      \"peaks\": [\n"
+        printPeaks("ch" c "/", "        ")
+        printf "      ]\n"
+      }
+      printf "    }%s\n", (c < views - 1 ? "," : "")
     }
     printf "  ],\n"
   }
@@ -395,5 +458,6 @@ if [ "${#levels[@]}" -gt 1 ]; then
 else
   echo "$outdir: 1 level, $made of ${width}x${height} at $spc samples a column ($rate Hz)"
 fi
+[ "$views" -eq 0 ] || echo "$outdir: its $views channels mixed, and each on its own in ch0/ to ch$((views - 1))/"
 # In a folder's run, say this recording is done
 [ -z "${MAKE_TILES_DONE:-}" ] || printf '%s\n' "$outdir" >> "$MAKE_TILES_DONE"
