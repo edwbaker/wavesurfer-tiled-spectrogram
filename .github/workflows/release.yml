@@ -1,7 +1,7 @@
 name: Release
 
-# Publishes to npm when a version tag (v0.1.0, …) is pushed. Needs an
-# NPM_TOKEN repository secret.
+# Stages each version on npm, for approval on npmjs.com, when its tag
+# (v0.1.0, …) is pushed. Needs a stage-only npm token as NPM_TOKEN.
 on:
   push:
     tags: ['v*']
@@ -17,13 +17,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # npm stage needs npm 11.15 or later, as Node.js 24 has
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm test
       - run: npm run build
       - run: npm run check
-      - run: npm publish --provenance --access public
+      - run: npm stage publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - uses: softprops/action-gh-release@v3
