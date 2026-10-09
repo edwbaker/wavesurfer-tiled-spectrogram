@@ -13,6 +13,7 @@
   #player { border: 1px solid #ddd; }
   #status { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; color: #555; }
   #player ::part(timeline-wrapper) { min-height: 20px; }
+  footer { margin-top: 1.5rem; padding-top: 0.5rem; border-top: 1px solid #ddd; color: #555; }
 </style>
 </head>
 <body>
@@ -47,6 +48,7 @@ documentation are <a href="https://github.com/edwbaker/wavesurfer-tiled-spectrog
 <div id="player"></div>
 <p id="credit"></p>
 <p id="status"></p>
+<footer>Maintained by <a href="https://ebaker.me.uk">Ed Baker</a></footer>
 <script>
   // Settings from the address bar, so that a view can be shared and reloaded
   const params = new URLSearchParams(location.search)
